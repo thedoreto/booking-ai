@@ -32,9 +32,9 @@ public class HotelContentRetriever implements ContentRetriever {
 
             // Ако колекцията ви зависи директно от hotelId или се образува с префикс:
             // String collectionName = "knowledge_" + hotelId;
-            String collectionName = hotelId; // Или ако в UI ви подават директно името на колекцията
+            String collectionName = "knowledge_" + hotelId; // Или ако в UI ви подават директно името на колекцията
 
-            List<KnowledgeDocument> documents = knowledgeService.findRelevant(query.text(), "knowledge_" + collectionName);
+            List<KnowledgeDocument> documents = knowledgeService.findRelevant(query.text(), collectionName);
 
             if (documents == null || documents.isEmpty()) {
                 return Collections.emptyList();
