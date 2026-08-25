@@ -1,29 +1,41 @@
 package com.hotel.knowledge.repository;
 
 import com.hotel.knowledge.model.KnowledgeDocument;
-import org.springframework.data.mongodb.repository.Aggregation;
-import org.springframework.data.mongodb.repository.MongoRepository;
+import org.bson.Document;
+import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
 @Repository
-public interface KnowledgeRepository
-        extends MongoRepository<KnowledgeDocument, String> {
+public class KnowledgeRepository {
 
-    @Aggregation(pipeline = {
-            """
-            {
-              "$vectorSearch": {
-                "index": "autoembed_index",
-                "path": "embedding",
-                "queryVector": ?0,
-                "numCandidates": 100,
-                "limit": 5
-              }
-            }
-            """
-    })
-    List<KnowledgeDocument> searchByVector(List<Double> embedding);
+    private final MongoTemplate mongoTemplate;
 
+    public KnowledgeRepository(MongoTemplate mongoTemplate) {
+        this.mongoTemplate = mongoTemplate;
+    }
+
+    public List<KnowledgeDocument> searchByVector(
+            List<Double> embedding,
+            String collectionName) {
+
+        Document vectorSearch = new Document("$vectorSearch",
+                new Document("index", "autoembed_index")
+                        .append("path", "embedding")
+                        .append("queryVector", embedding)
+                        .append("numCandidates", 100)
+                        .append("limit", 5)
+        );
+
+        var aggregation = org.springframework.data.mongodb.core.aggregation.Aggregation.newAggregation(
+                context -> vectorSearch
+        );
+
+        return mongoTemplate.aggregate(
+                aggregation,
+                collectionName,
+                KnowledgeDocument.class
+        ).getMappedResults();
+    }
 }

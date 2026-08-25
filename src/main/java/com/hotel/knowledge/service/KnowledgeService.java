@@ -20,8 +20,9 @@ public class KnowledgeService {
         this.embeddingModel = embeddingModel;
     }
 
-    public List<KnowledgeDocument> findRelevant(String question) {
-        //  testKnowledge();
+    public List<KnowledgeDocument> findRelevant(
+            String question,
+            String collectionName) {
 
         var embedding = embeddingModel.embed(question).content();
 
@@ -30,9 +31,13 @@ public class KnowledgeService {
                 .map(Float::doubleValue)
                 .toList();
 
-        var result = knowledgeRepo.searchByVector(vector);
+        var result = knowledgeRepo.searchByVector(
+                vector,
+                collectionName
+        );
 
         System.out.println("Question: " + question);
+        System.out.println("Collection: " + collectionName);
         System.out.println("Found: " + result.size());
 
         return result;
@@ -61,5 +66,4 @@ public class KnowledgeService {
             e.printStackTrace();
         }
     }
-
 }

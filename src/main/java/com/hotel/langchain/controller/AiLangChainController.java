@@ -1,6 +1,7 @@
 package com.hotel.langchain.controller;
 
 import com.hotel.langchain.assistant.Assistant;
+import com.hotel.langchain.context.TenantContext; // Импортирайте контекста
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -16,7 +17,7 @@ public class AiLangChainController {
     }
 
     public record Message(String role, String content) {}
-    public record ChatRequest(List<Message> messages) {}
+    public record ChatRequest(String hotelId, List<Message> messages) {}
     public record NewChatResponse(String reply) {}
 
     @PostMapping("/chat")
@@ -29,20 +30,26 @@ public class AiLangChainController {
         String userText = request.messages().get(request.messages().size() - 1).content();
 
         try {
-            // Пращаме го към AI услугата (тя автоматично ползва паметта и системния промпт!)
+            // 1. Подаваме hotelId (който идва от UI в JSON заявката) към ThreadLocal контекста
+            if (request.hotelId() != null && !request.hotelId().isBlank()) {
+                TenantContext.setHotelId(request.hotelId());
+            }
+
+            // 2. Пращаме го към AI услугата
             String aiReply = assistant.chat(userText);
             return new NewChatResponse(aiReply);
 
         } catch (Exception e) {
             String errorMsg = e.getMessage() != null ? e.getMessage() : "";
 
-            // Проверяваме за 429 (Too Many Requests / Rate Limit Exceeded)
             if (errorMsg.contains("429") || errorMsg.contains("Too Many Requests") || errorMsg.contains("RESOURCE_EXHAUSTED")) {
                 return new NewChatResponse("⚠️ В момента имаме твърде много заявки към системата. Моля, опитайте отново след малко!");
             }
 
-            // Общ отговор при друга грешка
             return new NewChatResponse("Възникна техническа грешка при връзката с асистента. Моля, опитайте по-късно.");
+        } finally {
+            // 3. ЗАДЪЛЖИТЕЛНО чистим контекста след приключване на заявката (предотвратява течове в пула от нишки)
+            TenantContext.clear();
         }
     }
 }

@@ -1,8 +1,8 @@
 package com.hotel.langchain.content;
 
-
 import com.hotel.knowledge.model.KnowledgeDocument;
 import com.hotel.knowledge.service.KnowledgeService;
+import com.hotel.langchain.context.TenantContext;
 import dev.langchain4j.rag.content.Content;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import dev.langchain4j.rag.query.Query;
@@ -13,8 +13,6 @@ import org.springframework.stereotype.Component;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
-
-
 
 @Component
 public class HotelContentRetriever implements ContentRetriever {
@@ -29,8 +27,14 @@ public class HotelContentRetriever implements ContentRetriever {
     @Override
     public List<Content> retrieve(Query query) {
         try {
-            // Твоят съществуващ метод за търсене
-            List<KnowledgeDocument> documents = knowledgeService.findRelevant(query.text());
+            // Взимаме динамичния hotelId, който дойде от UI през контролера
+            String hotelId = TenantContext.getHotelId();
+
+            // Ако колекцията ви зависи директно от hotelId или се образува с префикс:
+            // String collectionName = "knowledge_" + hotelId;
+            String collectionName = hotelId; // Или ако в UI ви подават директно името на колекцията
+
+            List<KnowledgeDocument> documents = knowledgeService.findRelevant(query.text(), "knowledge_" + collectionName);
 
             if (documents == null || documents.isEmpty()) {
                 return Collections.emptyList();
@@ -42,7 +46,6 @@ public class HotelContentRetriever implements ContentRetriever {
 
         } catch (Exception e) {
             log.error("Error while retrieving knowledge documents for query: " + query.text(), e);
-            // При грешка връщаме празен списък, за да не счупим целия чат
             return Collections.emptyList();
         }
     }
