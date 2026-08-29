@@ -1,7 +1,15 @@
 package com.hotel.langchain.controller;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.hotel.langchain.assistant.Assistant;
-import com.hotel.langchain.context.TenantContext; // Импортирайте контекста
+import com.hotel.langchain.context.TenantContext;
+import com.hotel.langchain.model.Shortcut;
+import com.hotel.langchain.service.ShortcutService;
+import org.bson.Document;
+import org.bson.types.ObjectId;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -11,45 +19,86 @@ import java.util.List;
 public class AiLangChainController {
 
     private final Assistant assistant;
+    private final ShortcutService shortcutService;
+    private final MongoTemplate mongoTemplate;
 
-    public AiLangChainController(Assistant assistant) {
+    public AiLangChainController(Assistant assistant, ShortcutService shortcutService, MongoTemplate mongoTemplate) {
         this.assistant = assistant;
+        this.shortcutService = shortcutService;
+        this.mongoTemplate = mongoTemplate;
     }
 
     public record Message(String role, String content) {}
-    public record ChatRequest(String hotelId, List<Message> messages) {}
+
+    public record ChatRequest(
+            String hotelId,
+            List<Message> messages,
+            @JsonProperty("shortcutId") String shortcutId
+    ) {}
+
     public record NewChatResponse(String reply) {}
 
     @PostMapping("/chat")
     public NewChatResponse chat(@RequestBody ChatRequest request) {
-        if (request == null || request.messages() == null || request.messages().isEmpty()) {
-            return new NewChatResponse("Липсват съобщения.");
+        if (request == null) {
+            return new NewChatResponse("Липсва заявка.");
         }
-
-        // Взимаме последното съобщение на потребителя
-        String userText = request.messages().get(request.messages().size() - 1).content();
 
         try {
-            // 1. Подаваме hotelId (който идва от UI в JSON заявката) към ThreadLocal контекста
-            if (request.hotelId() != null && !request.hotelId().isBlank()) {
-                TenantContext.setHotelId(request.hotelId());
+            setTenant(request.hotelId());
+
+            if (hasText(request.shortcutId())) {
+                return handleShortcut(request.hotelId(), request.shortcutId());
             }
 
-            // 2. Пращаме го към AI услугата
-            String aiReply = assistant.chat(userText);
-            return new NewChatResponse(aiReply);
+            if (request.messages() == null || request.messages().isEmpty()) {
+                return new NewChatResponse("Липсват съобщения.");
+            }
+
+            String userText = request.messages().get(request.messages().size() - 1).content();
+            return new NewChatResponse(assistant.chat(userText));
 
         } catch (Exception e) {
-            String errorMsg = e.getMessage() != null ? e.getMessage() : "";
-
-            if (errorMsg.contains("429") || errorMsg.contains("Too Many Requests") || errorMsg.contains("RESOURCE_EXHAUSTED")) {
-                return new NewChatResponse("⚠️ В момента имаме твърде много заявки към системата. Моля, опитайте отново след малко!");
-            }
-
             return new NewChatResponse("Възникна техническа грешка при връзката с асистента. Моля, опитайте по-късно.");
         } finally {
-            // 3. ЗАДЪЛЖИТЕЛНО чистим контекста след приключване на заявката (предотвратява течове в пула от нишки)
             TenantContext.clear();
         }
+    }
+
+    private void setTenant(String hotelId) {
+        if (hotelId != null && !hotelId.isBlank()) {
+            TenantContext.setHotelId(hotelId);
+        }
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private NewChatResponse handleShortcut(String hotelId, String shortcutId) {
+        String shortcutsCollection = "shortcuts_" + hotelId;
+        Shortcut shortcut = mongoTemplate.findOne(
+                new Query(Criteria.where("shortcutId").is(shortcutId)),
+                Shortcut.class,
+                shortcutsCollection
+        );
+
+        if (shortcut == null || shortcut.getTargetKnowledgeIds() == null || shortcut.getTargetKnowledgeIds().isEmpty()) {
+            return new NewChatResponse("Информацията не е намерена.");
+        }
+
+        String knowledgeId = shortcut.getTargetKnowledgeIds().get(0).toString();
+        Document knowledgeDoc = mongoTemplate.findById(new ObjectId(knowledgeId), Document.class, "knowledge_" + hotelId);
+
+        if (knowledgeDoc != null && knowledgeDoc.getString("text") != null) {
+            return new NewChatResponse(knowledgeDoc.getString("text"));
+        }
+
+        return new NewChatResponse("Информацията не е намерена.");
+    }
+
+    @GetMapping("/shortcuts")
+    public List<Shortcut> getShortcuts(@RequestParam String hotelId) {
+        return shortcutService.getShortcutsForHotel(hotelId);
     }
 }
