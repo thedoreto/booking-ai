@@ -12,7 +12,11 @@ import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.TextStyle;
 import java.util.List;
+import java.util.Locale;
 
 @RestController
 @RequestMapping("/api")
@@ -56,7 +60,10 @@ public class AiLangChainController {
             }
 
             String userText = request.messages().get(request.messages().size() - 1).content();
-            return new NewChatResponse(assistant.chat(userText));
+            LocalDate today = LocalDate.now();
+            String formattedDate = today.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+            String dayOfWeek = today.getDayOfWeek().getDisplayName(TextStyle.FULL, new Locale("bg", "BG"));
+            return new NewChatResponse(assistant.chat(request.hotelId(), formattedDate, dayOfWeek, userText));
 
         } catch (Exception e) {
             return new NewChatResponse("Възникна техническа грешка при връзката с асистента. Моля, опитайте по-късно.");
