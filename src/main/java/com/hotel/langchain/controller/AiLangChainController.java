@@ -8,6 +8,7 @@ import com.hotel.langchain.service.KafkaService;
 import com.hotel.langchain.service.ShortcutService;
 import com.hotel.langchain.exception.OpenDatePickerException;
 import dev.langchain4j.data.message.ChatMessage;
+import lombok.extern.slf4j.Slf4j;
 import org.bson.Document;
 import org.bson.types.ObjectId;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api")
 public class AiLangChainController {
@@ -98,6 +100,7 @@ public class AiLangChainController {
             return new NewChatResponse(finalReply, actionType);
 
         } catch (Exception e) {
+            log.error("Chat failed for hotelId={}, userId={}", request.hotelId(), request.userId(), e);
             return new NewChatResponse("Възникна техническа грешка при връзката с асистента. Моля, опитайте по-късно.", null);
         } finally {
             TenantContext.clear();
