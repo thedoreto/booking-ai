@@ -23,7 +23,7 @@ public class KnowledgeService {
     public List<KnowledgeDocument> findRelevant(
             String question,
             String collectionName) {
-
+     //   testKnowledge();
         var embedding = embeddingModel.embed(question).content();
 
         List<Double> vector = embedding.vectorAsList()
@@ -48,7 +48,7 @@ public class KnowledgeService {
 
         try {
             var embedding = embeddingModel
-                    .embed("Хотелът има седем(7) звезди.")
+                    .embed("Хотелът се намира в Багдад, на ул. „Сезам“ №40. До хотела се стига по пътя към гората. След третия завой се вижда голяма скала. Хотелът се намира зад скалата. При входа гостите трябва да кажат „Сезам, отвори се!“, за да бъде отворен входът.")
                     .content();
 
             List<Double> vector = embedding.vectorAsList()
