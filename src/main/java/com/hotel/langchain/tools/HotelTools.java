@@ -176,7 +176,8 @@ public class HotelTools {
 
 
 
-    @KafkaListener(topics = REPLY_TOPIC, groupId = "agent-tools-reply-group")
+    // Уникална група за всяка инстанция: отговорът трябва да стигне до инстанцията, която чака future-а
+    @KafkaListener(topics = REPLY_TOPIC, groupId = "agent-tools-reply-#{T(java.util.UUID).randomUUID()}")
     public void listenForReplies(ConsumerRecord<String, String> record) {
         try {
             ObjectMapper objectMapper = new ObjectMapper();
