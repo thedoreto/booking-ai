@@ -1,7 +1,6 @@
 package com.hotel.langchain.config;
 
 import com.hotel.langchain.context.TenantContext;
-import com.hotel.langchain.exception.OpenDatePickerException;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.model.chat.Capability;
@@ -16,22 +15,23 @@ import dev.langchain4j.model.output.Response;
 import java.util.List;
 import java.util.Set;
 
-// Когато tool е поискал календара (OpenDatePickerException), LangChain4j връща грешката на модела
-// и го вика още веднъж само за да напише текст, който контролерът после изхвърля.
+// Когато tool е поискал действие в UI (календар, избор на стаи), LangChain4j вика модела още веднъж
+// само за да напише текст, който контролерът после изхвърля.
 // Тук прекъсваме този цикъл и връщаме готовия отговор, без да викаме Gemini.
-public class DatePickerShortCircuitChatModel implements ChatLanguageModel {
+public class UiActionShortCircuitChatModel implements ChatLanguageModel {
 
     private final ChatLanguageModel delegate;
 
-    public DatePickerShortCircuitChatModel(ChatLanguageModel delegate) {
+    public UiActionShortCircuitChatModel(ChatLanguageModel delegate) {
         this.delegate = delegate;
     }
 
     @Override
     public ChatResponse chat(ChatRequest chatRequest) {
-        if (TenantContext.isDatePickerRequested()) {
+        TenantContext.UiAction uiAction = TenantContext.getUiAction();
+        if (uiAction != null) {
             return ChatResponse.builder()
-                    .aiMessage(AiMessage.from(OpenDatePickerException.DATE_PICKER_REPLY))
+                    .aiMessage(AiMessage.from(uiAction.reply()))
                     .finishReason(FinishReason.STOP)
                     .build();
         }

@@ -6,8 +6,8 @@ import com.hotel.langchain.config.RetryingChatLanguageModel;
 import com.hotel.langchain.context.TenantContext;
 import com.hotel.langchain.model.Shortcut;
 import com.hotel.langchain.service.KafkaService;
+import com.hotel.langchain.service.RoomBookingService;
 import com.hotel.langchain.service.ShortcutService;
-import com.hotel.langchain.exception.OpenDatePickerException;
 import dev.langchain4j.data.message.ChatMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.bson.Document;
@@ -35,17 +35,20 @@ public class AiLangChainController {
     private final ShortcutService shortcutService;
     private final MongoTemplate mongoTemplate;
     private final KafkaService kafkaService;
+    private final RoomBookingService roomBookingService;
 
     private static final String KAFKA_TOPIC = "test-topic";
 
     public AiLangChainController(Assistant assistant,
                                  ShortcutService shortcutService,
                                  MongoTemplate mongoTemplate,
-                                 KafkaService  kafkaService ) {
+                                 KafkaService  kafkaService,
+                                 RoomBookingService roomBookingService) {
         this.assistant = assistant;
         this.shortcutService = shortcutService;
         this.mongoTemplate = mongoTemplate;
         this.kafkaService = kafkaService;
+        this.roomBookingService = roomBookingService;
     }
 
     public record Message(String role, String content) {}
@@ -57,7 +60,17 @@ public class AiLangChainController {
             @JsonProperty("shortcutId") String shortcutId
     ) {}
 
-    public record NewChatResponse(String reply, String actionType) {}
+    // data: допълнителни данни за actionType (напр. списък стаи при SELECT_ROOMS)
+    public record NewChatResponse(String reply, String actionType, Object data) {
+        public NewChatResponse(String reply, String actionType) {
+            this(reply, actionType, null);
+        }
+    }
+
+    public record AvailableRoomsRequest(String hotelId, String userId, String startDate, String endDate) {}
+
+    public record CreateBookingRequest(String hotelId, String userId, String startDate, String endDate,
+                                       List<String> roomIds) {}
 
     @PostMapping("/chat")
     public NewChatResponse chat(@RequestBody ChatRequest request) {
@@ -95,15 +108,13 @@ public class AiLangChainController {
 
             sendToKafka(hotelId, "User message: " + userText + " | AI Reply: " + aiReply);
 
-            String actionType = null;
-            String finalReply = aiReply;
-
-            if (TenantContext.isDatePickerRequested()) {
-                actionType = OpenDatePickerException.OPEN_DATE_PICKER_ACTION;
-                finalReply = OpenDatePickerException.DATE_PICKER_REPLY;
+            // Tool е поискал действие в UI (календар, избор на стаи) – връщаме го вместо текста от модела
+            TenantContext.UiAction uiAction = TenantContext.getUiAction();
+            if (uiAction != null) {
+                return new NewChatResponse(uiAction.reply(), uiAction.actionType(), uiAction.data());
             }
 
-            return new NewChatResponse(finalReply, actionType);
+            return new NewChatResponse(aiReply, null);
 
         } catch (Exception e) {
             if (isQuotaExceeded(e)) {
@@ -175,6 +186,42 @@ public class AiLangChainController {
         }
 
         return new NewChatResponse("Информацията не е намерена.", null);
+    }
+
+    // Избрани дати от календара -> свободни стаи директно от booking-system, без LLM
+    @PostMapping("/rooms/available")
+    public NewChatResponse availableRooms(@RequestBody AvailableRoomsRequest request) {
+        if (request == null || !hasText(request.hotelId())) {
+            return new NewChatResponse("Липсва хотел.", null);
+        }
+        try {
+            TenantContext.UiAction result = roomBookingService.findAvailableRooms(
+                    request.hotelId(), request.startDate(), request.endDate());
+            sendToKafka(request.hotelId(), "Available rooms " + request.startDate() + " - " + request.endDate()
+                    + " | Reply: " + result.reply());
+            return new NewChatResponse(result.reply(), result.actionType(), result.data());
+        } catch (Exception e) {
+            log.error("Available rooms failed for hotelId={}", request.hotelId(), e);
+            return new NewChatResponse("Възникна техническа грешка при търсене на стаи. Моля, опитайте по-късно.", null);
+        }
+    }
+
+    // Избрани стаи от списъка -> резервация директно в booking-system, без LLM
+    @PostMapping("/bookings")
+    public NewChatResponse createBooking(@RequestBody CreateBookingRequest request) {
+        if (request == null || !hasText(request.hotelId())) {
+            return new NewChatResponse("Липсва хотел.", null);
+        }
+        try {
+            TenantContext.UiAction result = roomBookingService.createBookings(request.hotelId(), request.userId(),
+                    request.startDate(), request.endDate(), request.roomIds());
+            sendToKafka(request.hotelId(), "Booking rooms " + request.roomIds() + " " + request.startDate()
+                    + " - " + request.endDate() + " for userId=" + request.userId() + " | Reply: " + result.reply());
+            return new NewChatResponse(result.reply(), result.actionType(), result.data());
+        } catch (Exception e) {
+            log.error("Booking failed for hotelId={}, userId={}", request.hotelId(), request.userId(), e);
+            return new NewChatResponse("Възникна техническа грешка при резервацията. Моля, опитайте по-късно.", null);
+        }
     }
 
     @GetMapping("/shortcuts")

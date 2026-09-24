@@ -10,6 +10,7 @@ public class OpenDatePickerException extends RuntimeException {
 
     public OpenDatePickerException() {
         super(SPECIAL_ACTION_OPEN_DATE_PICKER);
-        TenantContext.requestDatePicker();
+        TenantContext.requestUiAction(
+                new TenantContext.UiAction(OPEN_DATE_PICKER_ACTION, DATE_PICKER_REPLY, null));
     }
 }

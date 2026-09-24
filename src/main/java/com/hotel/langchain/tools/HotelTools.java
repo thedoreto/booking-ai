@@ -1,36 +1,27 @@
 package com.hotel.langchain.tools;
 
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hotel.langchain.context.TenantContext;
 import com.hotel.langchain.exception.OpenDatePickerException;
-import com.hotel.langchain.service.KafkaService;
+import com.hotel.langchain.service.HotelBackendClient;
+import com.hotel.langchain.service.HotelBackendClient.HotelBackendException;
+import com.hotel.langchain.service.RoomBookingService;
 import dev.langchain4j.agent.tool.Tool;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.TimeUnit;
 
 @Component
 public class HotelTools {
 
-    private final KafkaService kafkaService;
+    private final HotelBackendClient backendClient;
+    private final RoomBookingService roomBookingService;
 
-    // Пазим чакащите заявки, за да върнем отговора точно на този инструмент
-    private final ConcurrentMap<String, CompletableFuture<String>> responseFutures = new ConcurrentHashMap<>();
-
-    private static final String REQUEST_TOPIC = "hotel-requests-topic";
-    private static final String REPLY_TOPIC = "hotel-replies-topic";
-
-    public HotelTools(KafkaService kafkaService) {
-        this.kafkaService = kafkaService;
+    public HotelTools(HotelBackendClient backendClient, RoomBookingService roomBookingService) {
+        this.backendClient = backendClient;
+        this.roomBookingService = roomBookingService;
     }
 
     @Tool("Връща активните резервации на текущия логнат потребител. Използвай този инструмент, когато клиентът пита за своите резервации.")
@@ -42,24 +33,10 @@ public class HotelTools {
             return "Моля, влезте в профила си, за да проверите вашите резервации.";
         }
 
-        String correlationId = UUID.randomUUID().toString();
-        CompletableFuture<String> future = new CompletableFuture<>();
-        responseFutures.put(correlationId, future);
-
         try {
-            Map<String, Object> message = Map.of(
-                    "correlationId", correlationId,
-                    "replyTo", REPLY_TOPIC,
-                    "hotelId", hotelId,
-                    "userId", userId, // Пращаме го към бекенда
-                    "event", "get_reservations"
-            );
-
-            kafkaService.send(REQUEST_TOPIC, hotelId, message);
-            return future.get(5, TimeUnit.SECONDS);
-
+            Object reservations = backendClient.request(hotelId, "get_reservations", Map.of("userId", userId));
+            return backendClient.toJson(reservations);
         } catch (Exception e) {
-            responseFutures.remove(correlationId);
             return "Грешка при зареждане на резервациите: " + e.getMessage();
         }
     }
@@ -68,32 +45,17 @@ public class HotelTools {
             "Използвай ТОЗИ инструмент САМО когато клиентът пита общо какви видове стаи изобщо съществуват в хотела, " +
             "БЕЗ да споменава дати, период, утре или резервация.")
     public String getAllRooms() {
-        String correlationId = UUID.randomUUID().toString();
-        CompletableFuture<String> future = new CompletableFuture<>();
-        responseFutures.put(correlationId, future);
-
         String hotelId = TenantContext.getHotelId();
         if (hotelId == null || hotelId.isEmpty()) {
             return "Грешка: Липсва идентификатор на хотела.";
         }
 
         try {
-            // 1. Изпращаме съобщението към другия микросервиз през Kafka с нужните метаданни
-            Map<String, Object> message = Map.of(
-                    "correlationId", correlationId,
-                    "replyTo", REPLY_TOPIC,
-                    "hotelId", hotelId,
-                    "event", "get_all_rooms"
-            );
-
-            kafkaService.send(REQUEST_TOPIC, hotelId, message);
-            return future.get(5, TimeUnit.SECONDS);
-
+            Object rooms = backendClient.request(hotelId, "get_all_rooms", Map.of());
+            return backendClient.toJson(rooms);
         } catch (Exception e) {
-            responseFutures.remove(correlationId);
             return "Грешка при връзка с хотелската система: " + e.getMessage();
         }
-
     }
 
     @Tool("Връща наличните стаи за период. " +
@@ -106,43 +68,25 @@ public class HotelTools {
 
        System.out.println("Hotel ID: " + hotelId + ", Start Date: " + startDateStr + ", End Date: " + endDateStr);
 
-       if (startDateStr == null || endDateStr == null) {
-           throw new OpenDatePickerException();
-       }
-
-       String correlationId = UUID.randomUUID().toString();
-
+       // Без дати или с невалиден период – UI отваря календара
        try {
            LocalDate startDate = LocalDate.parse(startDateStr);
            LocalDate endDate = LocalDate.parse(endDateStr);
-           if (!startDate.isBefore(endDate)) {
+           if (!startDate.isBefore(endDate) || startDate.isBefore(LocalDate.now())) {
                throw new OpenDatePickerException();
            }
-           if (startDate.isBefore(LocalDate.now())) {
-               throw new OpenDatePickerException();
-           }
-
-           CompletableFuture<String> future = new CompletableFuture<>();
-           responseFutures.put(correlationId, future);
-
-
-           Map<String, Object> message = Map.of(
-                   "correlationId", correlationId,
-                   "replyTo", REPLY_TOPIC,
-                   "hotelId", hotelId,
-                   "startDate", startDate.toString(),
-                   "endDate", endDate.toString(),
-                   "event", "get_available_rooms_by_dates"
-           );
-
-           kafkaService.send(REQUEST_TOPIC, hotelId, message);
-
-           return future.get(5, TimeUnit.SECONDS);
-
-       } catch (Exception e) {
-           responseFutures.remove(correlationId);
+       } catch (DateTimeParseException | NullPointerException e) {
            throw new OpenDatePickerException();
        }
+
+       TenantContext.UiAction result = roomBookingService.findAvailableRooms(hotelId, startDateStr, endDateStr);
+       if (result.actionType() == null) {
+           // Няма стаи или грешка – моделът ще го предаде на потребителя
+           return result.reply();
+       }
+       // Списъкът отива директно в UI; следващото извикване на модела се прескача
+       TenantContext.requestUiAction(result);
+       return result.reply();
        /*     @dev.langchain4j.agent.tool.P("Начална дата на настаняване във формат YYYY-MM-DD") LocalDate fromDate,
             @dev.langchain4j.agent.tool.P("Крайна дата на напускане във формат YYYY-MM-DD") LocalDate toDate
     ) {
@@ -172,31 +116,5 @@ public class HotelTools {
                 "1. Не мога да разкрия съставките.\n" +
                 "2. Отвори някой сайт за готвене и си ги намери сам/сама. 😊\n\n" +
                 "Приятно печене и успех в разследването! 🚀";
-    }
-
-
-
-    // Уникална група за всяка инстанция: отговорът трябва да стигне до инстанцията, която чака future-а
-    @KafkaListener(topics = REPLY_TOPIC, groupId = "agent-tools-reply-#{T(java.util.UUID).randomUUID()}")
-    public void listenForReplies(ConsumerRecord<String, String> record) {
-        try {
-            ObjectMapper objectMapper = new ObjectMapper();
-            Map<String, Object> responsePayload = objectMapper.readValue(record.value(), Map.class);
-
-            // 1. Взимаме correlationId от върнатия отговор
-            String correlationId = (String) responsePayload.get("correlationId");
-
-            // 2. Проверяваме дали пазим такъв чакащ future в паметта
-            if (correlationId != null && responseFutures.containsKey(correlationId)) {
-                // Взимаме обекта/списъка "data" и го правим на чист JSON string
-                Object rawData = responsePayload.get("data");
-                String roomData = objectMapper.writeValueAsString(rawData);
-
-                responseFutures.get(correlationId).complete(roomData);
-                responseFutures.remove(correlationId);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
     }
 }

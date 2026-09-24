@@ -3,7 +3,10 @@ package com.hotel.langchain.context;
 public class TenantContext {
     private static final ThreadLocal<String> CURRENT_HOTEL_ID = new ThreadLocal<>();
     private static final ThreadLocal<String> CURRENT_USER_ID = new ThreadLocal<>();
-    private static final ThreadLocal<Boolean> OPEN_DATE_PICKER = new ThreadLocal<>();
+    // Действие за UI, поискано от tool по време на заявката (календар, избор на стаи...)
+    private static final ThreadLocal<UiAction> UI_ACTION = new ThreadLocal<>();
+
+    public record UiAction(String actionType, String reply, Object data) {}
 
     public static void setHotelId(String hotelId) {
         CURRENT_HOTEL_ID.set(hotelId);
@@ -21,16 +24,16 @@ public class TenantContext {
         return CURRENT_USER_ID.get() != null ? CURRENT_USER_ID.get() : null;
     }
 
-    public static void requestDatePicker() {
-        OPEN_DATE_PICKER.set(true);
+    public static void requestUiAction(UiAction action) {
+        UI_ACTION.set(action);
     }
 
-    public static boolean isDatePickerRequested() {
-        return Boolean.TRUE.equals(OPEN_DATE_PICKER.get());
+    public static UiAction getUiAction() {
+        return UI_ACTION.get();
     }
 
     public static void clear() {
-        OPEN_DATE_PICKER.remove();
+        UI_ACTION.remove();
         CURRENT_HOTEL_ID.remove();
         CURRENT_USER_ID.remove();
     }

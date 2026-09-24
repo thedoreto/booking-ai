@@ -14,9 +14,11 @@
 ## 3. Структура (`src/main/java/com/hotel`)
 - `BookingAiApplication` – entry point
 - `config/CorsConfig` – CORS за `/api/**` (всички origins)
-- `langchain/controller` – `AiLangChainController`: `/api/chat`, `/api/shortcuts`
+- `langchain/controller` – `AiLangChainController`: `/api/chat`, `/api/shortcuts`, `/api/rooms/available` и `/api/bookings` (последните две – директно към booking-system, без LLM)
 - `langchain/assistant/Assistant` – `@AiService` интерфейс със system prompt (на български)
-- `langchain/tools/HotelTools` – `@Tool` методи; изпращат заявка към Kafka и чакат отговор (correlationId + `CompletableFuture`, timeout 5s)
+- `langchain/tools/HotelTools` – `@Tool` методи; ползват `HotelBackendClient` и `RoomBookingService`
+- `langchain/service/HotelBackendClient` – Kafka request/reply към booking-system (correlationId + `CompletableFuture`, timeout 5s, `@KafkaListener` за отговорите); `error` в отговора → `HotelBackendException`
+- `langchain/service/RoomBookingService` – свободни стаи и създаване на резервации (event `create_booking`); връща `TenantContext.UiAction`
 - `langchain/content/HotelContentRetriever` – RAG retriever, чете `TenantContext`
 - `langchain/context/TenantContext` – ThreadLocal за hotelId/userId
 - `langchain/config` – `AiConfig` (Gemini beans), `LangChainConfig` (ChatMemory), `KafkaCertInitializer`
@@ -38,7 +40,7 @@ docker build -t booking-ai .       # Docker образ (слуша на $PORT, d
 - **Multi-tenancy чрез имена на колекции**: `knowledge_<hotelId>`, `shortcuts_<hotelId>`, `logs_<hotelId>`. hotelId идва от request body → `TenantContext` (ThreadLocal), който контролерът чисти във `finally`.
 - Потребителските съобщения и промптове са на български; отговорите на асистента също.
 - Error handling: контролерът хваща всичко и връща `NewChatResponse(reply, actionType)` с приятелско съобщение – без HTTP error кодове. Грешките се логват предимно с `System.out/err` (не с SLF4J).
-- UI действие: ако tool хвърли `OpenDatePickerException`, отговорът съдържа маркера `SPECIAL_ACTION:OPEN_DATE_PICKER` и контролерът връща `actionType=OPEN_DATE_PICKER` вместо текст.
+- UI действие: tool записва `TenantContext.UiAction(actionType, reply, data)` (`OpenDatePickerException` → `OPEN_DATE_PICKER`; намерени стаи → `SELECT_ROOMS` с `{startDate, endDate, rooms}`). `UiActionShortCircuitChatModel` прескача следващото извикване към Gemini, а контролерът връща `NewChatResponse(reply, actionType, data)`.
 - Kafka payload = JSON `Map` с `hotelId` и `event`; топици: `test-topic` (логове), `hotel-requests-topic` / `hotel-replies-topic` (tools RPC).
 
 ## 6. Капани
@@ -47,7 +49,8 @@ docker build -t booking-ai .       # Docker образ (слуша на $PORT, d
 - Тестът `contextLoads` и стартът изискват достъп до Atlas и Aiven Kafka – няма mock/embedded конфигурация.
 - `Assistant.chat(hotelName, ...)` получава `hotelId` като `{hotelName}`. Конфигурираният `ChatMemory` е **един общ бийн без memoryId** – историята не е по потребител/хотел; контролерът подава само последното съобщение.
 - `TenantContext.getHotelId()` връща дефолт `"knowledge_seven_stars"`, ако липсва hotelId (а retriever добавя още `knowledge_` префикс → двойно).
-- `HotelTools`: `@KafkaListener` за отговорите е в самия tool клас; `getAvailableRoomsByDates` хвърля `OpenDatePickerException` при всяка грешка (вкл. timeout/невалидни дати); при timeout future-ът се маха от map-а, но късен отговор се игнорира. Има и шеговит tool `getStrawberryMuffinRecipe`.
+- `HotelTools.getAvailableRoomsByDates` хвърля `OpenDatePickerException` при липсващи/невалидни дати; при грешка/timeout от бекенда връща текст на модела. Късен отговор след timeout се игнорира – при `create_booking` резервацията може да е записана, въпреки че потребителят вижда грешка. Има и шеговит tool `getStrawberryMuffinRecipe`.
+- `/api/rooms/available` и `/api/bookings` вярват на `userId` от body-то (няма auth) и не минават през chat паметта – LLM-ът не знае за резервации, направени с бутона.
 - `KafkaMessageConsumer` е с `topicPattern=".*"`: консумира и собствените си съобщения (вкл. RPC заявки/отговори) и ги записва като логове; очаква поле `event` като низ.
 - Backend микросервисът, който отговаря на `hotel-requests-topic`, не е в това repo – tools зависят от него (5s timeout).
 - `KnowledgeRepository` е с твърдо кодирани `numCandidates=100`, `limit=5`; Atlas vector индексът трябва да съществува във всяка `knowledge_<hotelId>` колекция.
