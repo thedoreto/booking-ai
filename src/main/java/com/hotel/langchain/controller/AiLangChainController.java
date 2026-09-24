@@ -100,7 +100,7 @@ public class AiLangChainController {
 
             if (TenantContext.isDatePickerRequested()) {
                 actionType = OpenDatePickerException.OPEN_DATE_PICKER_ACTION;
-                finalReply = "Моля, изберете период за настаняване от календара, за да продължим.";
+                finalReply = OpenDatePickerException.DATE_PICKER_REPLY;
             }
 
             return new NewChatResponse(finalReply, actionType);

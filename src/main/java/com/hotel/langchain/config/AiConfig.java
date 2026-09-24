@@ -25,7 +25,9 @@ public class AiConfig {
                 .maxRetries(1) // повторните опити са в RetryingChatLanguageModel
                 .build();
         // При 503 от Gemini: нов опит след 2s, 5s и 10s
-        return new RetryingChatLanguageModel(gemini, 2_000, 5_000, 10_000);
+        ChatLanguageModel retrying = new RetryingChatLanguageModel(gemini, 2_000, 5_000, 10_000);
+        // Без излишно извикване към Gemini, след като tool е поискал календара
+        return new DatePickerShortCircuitChatModel(retrying);
     }
 
     @Bean
