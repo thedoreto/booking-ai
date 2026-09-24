@@ -1,6 +1,7 @@
 package com.hotel.langchain.assistant;
 
 
+import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.UserMessage;
 import dev.langchain4j.service.V;
@@ -18,6 +19,7 @@ public interface Assistant {
         Винаги отговаряй на български език, освен ако клиентът изрично не поиска друг език.
         """)
     String chat(
+            @MemoryId String memoryId,
             @V("hotelName") String hotelName,
             @V("currentDate") String currentDate,
             @V("dayOfWeek") String dayOfWeek,

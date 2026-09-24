@@ -88,7 +88,9 @@ public class AiLangChainController {
 
             System.out.println("hotelId: " + hotelId + ", formattedDate: " + formattedDate + ", dayOfWeek: " + dayOfWeek + ", userText: " + userText);
 
-            String aiReply = assistant.chat(hotelId, formattedDate, dayOfWeek, userText);
+            // Отделна история за всеки хотел и потребител
+            String memoryId = hotelId + ":" + (hasText(request.userId()) ? request.userId() : "anonymous");
+            String aiReply = assistant.chat(memoryId, hotelId, formattedDate, dayOfWeek, userText);
 
             sendToKafka(hotelId, "User message: " + userText + " | AI Reply: " + aiReply);
 
