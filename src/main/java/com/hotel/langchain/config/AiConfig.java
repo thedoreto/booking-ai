@@ -19,10 +19,13 @@ public class AiConfig {
 
     @Bean
     ChatLanguageModel chatLanguageModel() {
-        return GoogleAiGeminiChatModel.builder()
+        ChatLanguageModel gemini = GoogleAiGeminiChatModel.builder()
                 .apiKey(apiKey)
                 .modelName(baseModel)
+                .maxRetries(1) // повторните опити са в RetryingChatLanguageModel
                 .build();
+        // При 503 от Gemini: нов опит след 2s, 5s и 10s
+        return new RetryingChatLanguageModel(gemini, 2_000, 5_000, 10_000);
     }
 
     @Bean

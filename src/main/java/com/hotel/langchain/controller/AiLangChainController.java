@@ -2,6 +2,7 @@ package com.hotel.langchain.controller;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.hotel.langchain.assistant.Assistant;
+import com.hotel.langchain.config.RetryingChatLanguageModel;
 import com.hotel.langchain.context.TenantContext;
 import com.hotel.langchain.model.Shortcut;
 import com.hotel.langchain.service.KafkaService;
@@ -108,6 +109,10 @@ public class AiLangChainController {
             if (isQuotaExceeded(e)) {
                 log.warn("Gemini API quota exceeded for hotelId={}: {}", request.hotelId(), e.getMessage());
                 return new NewChatResponse("Изчерпахте безплатните заявки към AI асистента. Моля, опитайте отново по-късно!", null);
+            }
+            if (RetryingChatLanguageModel.isModelOverloaded(e)) {
+                log.warn("Gemini model overloaded for hotelId={}: {}", request.hotelId(), e.getMessage());
+                return new NewChatResponse("В момента асистентът е претоварен. Моля, опитайте отново след минута.", null);
             }
             log.error("Chat failed for hotelId={}, userId={}", request.hotelId(), request.userId(), e);
             return new NewChatResponse("Възникна техническа грешка при връзката с асистента. Моля, опитайте по-късно.", null);
