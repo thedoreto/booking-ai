@@ -60,13 +60,14 @@ public class AiLangChainController {
 
     @PostMapping("/chat")
     public NewChatResponse chat(@RequestBody ChatRequest request) {
+        System.out.println("Received chat request: " + request);
         if (request == null) {
             return new NewChatResponse("Липсва заявка.", null);
         }
 
         try {
             setTenant(request.hotelId(), request.userId());
-
+            System.out.println("Tenant set: hotelId=" + request.hotelId() + ", userId=" + request.userId());
             if (hasText(request.shortcutId())) {
                 NewChatResponse response = handleShortcut(request.hotelId(), request.shortcutId());
                 sendToKafka(request.hotelId(), "Shortcut triggered: " + request.shortcutId());
