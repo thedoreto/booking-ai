@@ -85,6 +85,8 @@ public class AiLangChainController {
             String dayOfWeek = today.getDayOfWeek().getDisplayName(TextStyle.FULL, new Locale("bg", "BG"));
             String hotelId = request.hotelId();
 
+            System.out.println("hotelId: " + hotelId + ", formattedDate: " + formattedDate + ", dayOfWeek: " + dayOfWeek + ", userText: " + userText);
+
             String aiReply = assistant.chat(hotelId, formattedDate, dayOfWeek, userText);
 
             sendToKafka(hotelId, "User message: " + userText + " | AI Reply: " + aiReply);
@@ -100,6 +102,10 @@ public class AiLangChainController {
             return new NewChatResponse(finalReply, actionType);
 
         } catch (Exception e) {
+            if (isQuotaExceeded(e)) {
+                log.warn("Gemini API quota exceeded for hotelId={}: {}", request.hotelId(), e.getMessage());
+                return new NewChatResponse("Изчерпахте безплатните заявки към AI асистента. Моля, опитайте отново по-късно!", null);
+            }
             log.error("Chat failed for hotelId={}, userId={}", request.hotelId(), request.userId(), e);
             return new NewChatResponse("Възникна техническа грешка при връзката с асистента. Моля, опитайте по-късно.", null);
         } finally {
@@ -122,6 +128,18 @@ public class AiLangChainController {
         if (userId != null && !userId.isBlank()) {
             TenantContext.setUserId(userId);
         }
+    }
+
+    // Проверяваме цялата верига от причини, защото LangChain4j обвива HTTP грешката от Gemini
+    private boolean isQuotaExceeded(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String msg = t.getMessage();
+            if (msg != null && (msg.contains("429") || msg.contains("Too Many Requests")
+                    || msg.contains("RESOURCE_EXHAUSTED") || msg.contains("quota"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean hasText(String value) {
