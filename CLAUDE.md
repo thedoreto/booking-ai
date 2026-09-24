@@ -40,7 +40,7 @@ docker build -t booking-ai .       # Docker образ (слуша на $PORT, d
 - **Multi-tenancy чрез имена на колекции**: `knowledge_<hotelId>`, `shortcuts_<hotelId>`, `logs_<hotelId>`. hotelId идва от request body → `TenantContext` (ThreadLocal), който контролерът чисти във `finally`.
 - Потребителските съобщения и промптове са на български; отговорите на асистента също.
 - Error handling: контролерът хваща всичко и връща `NewChatResponse(reply, actionType)` с приятелско съобщение – без HTTP error кодове. Грешките се логват предимно с `System.out/err` (не с SLF4J).
-- UI действие: tool записва `TenantContext.UiAction(actionType, reply, data)` (`OpenDatePickerException` → `OPEN_DATE_PICKER`; намерени стаи → `SELECT_ROOMS` с `{startDate, endDate, rooms}`). `UiActionShortCircuitChatModel` прескача следващото извикване към Gemini, а контролерът връща `NewChatResponse(reply, actionType, data)`.
+- UI действие: tool записва `TenantContext.UiAction(actionType, reply, data)` (`OpenDatePickerException(start, end)` → `OPEN_DATE_PICKER` с `data` = казаните дати за попълване на календара; `/api/rooms/available` → `SELECT_ROOMS` с `{startDate, endDate, rooms}`). `UiActionShortCircuitChatModel` прескача следващото извикване към Gemini, а контролерът връща `NewChatResponse(reply, actionType, data)`.
 - Kafka payload = JSON `Map` с `hotelId` и `event`; топици: `test-topic` (логове), `hotel-requests-topic` / `hotel-replies-topic` (tools RPC).
 
 ## 6. Капани
@@ -49,7 +49,7 @@ docker build -t booking-ai .       # Docker образ (слуша на $PORT, d
 - Тестът `contextLoads` и стартът изискват достъп до Atlas и Aiven Kafka – няма mock/embedded конфигурация.
 - `Assistant.chat(hotelName, ...)` получава `hotelId` като `{hotelName}`. Конфигурираният `ChatMemory` е **един общ бийн без memoryId** – историята не е по потребител/хотел; контролерът подава само последното съобщение.
 - `TenantContext.getHotelId()` връща дефолт `"knowledge_seven_stars"`, ако липсва hotelId (а retriever добавя още `knowledge_` префикс → двойно).
-- `HotelTools.getAvailableRoomsByDates` хвърля `OpenDatePickerException` при липсващи/невалидни дати; при грешка/timeout от бекенда връща текст на модела. Късен отговор след timeout се игнорира – при `create_booking` резервацията може да е записана, въпреки че потребителят вижда грешка. Има и шеговит tool `getStrawberryMuffinRecipe`.
+- `HotelTools.getAvailableRoomsByDates` не търси стаи: винаги хвърля `OpenDatePickerException` с валидните казани дати (минали/невалидни се изпускат); стаите идват после от `/api/rooms/available`. Късен отговор след timeout се игнорира – при `create_booking` резервацията може да е записана, въпреки че потребителят вижда грешка. Има и шеговит tool `getStrawberryMuffinRecipe`.
 - `/api/rooms/available` и `/api/bookings` вярват на `userId` от body-то (няма auth) и не минават през chat паметта – LLM-ът не знае за резервации, направени с бутона.
 - `KafkaMessageConsumer` е с `topicPattern=".*"`: консумира и собствените си съобщения (вкл. RPC заявки/отговори) и ги записва като логове; очаква поле `event` като низ.
 - Backend микросервисът, който отговаря на `hotel-requests-topic`, не е в това repo – tools зависят от него (5s timeout).
