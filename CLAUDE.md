@@ -23,7 +23,11 @@
 - `langchain/context/TenantContext` – ThreadLocal за hotelId/userId
 - `langchain/config` – `AiConfig` (Gemini beans), `LangChainConfig` (ChatMemory), `KafkaCertInitializer`
 - `langchain/service|repository|model` – Shortcuts и `KafkaService` (producer)
-- `langchain/log` – структурирани логове за отчетите в `logs_<hotelId>`: `ChatLogEntry` (`type`, `outcome`, `errorType`, `durationMs`, текстове до 500 знака, `details`), `ChatLogService` (асинхронен запис директно в Mongo, TTL индекс 180 дни по `timestamp`), `GeminiUsageTracker` (`ChatModelListener`: извиквания, токени и tools на Gemini за текущата заявка)
+- `langchain/log` – структурирани логове за отчетите в `logs_<hotelId>`, по един запис на действие на госта:
+  - `ChatFlow` – действие от няколко заявки (`new_booking`: календар → търсене → резервация; `cancel_booking`: списък → откази) е **един документ**, който се допълва (`flowId`, `status`, `steps[]`, `gemini`). `flowId` се връща на UI в `data` и UI го праща обратно със следващата стъпка.
+  - `ChatLogEntry` – отделен запис (въпрос в чата, бутон със знание) или стъпка в `ChatFlow` (`outcome`, `errorType`, `durationMs`, текстове до 500 знака)
+  - `ChatLogService` – асинхронен запис в Mongo в отделна нишка `chat-log-writer` (опашка 1000), upsert по `flowId` за стъпките, TTL индекс 180 дни по `timestamp`
+  - `GeminiUsageTracker` (`ChatModelListener`) – извиквания, токени и tools на Gemini за текущата заявка
 - `knowledge/` – `KnowledgeService` (embed + vector search), `KnowledgeRepository`, `KnowledgeDocument`
 
 ## 4. Команди
@@ -42,6 +46,8 @@ docker build -t booking-ai .       # Docker образ (слуша на $PORT, d
 - Error handling: контролерът хваща всичко и връща `NewChatResponse(reply, actionType)` с приятелско съобщение – без HTTP error кодове. Грешките се логват предимно с `System.out/err` (не с SLF4J).
 - UI действие: tool записва `TenantContext.UiAction(actionType, reply, data)` (`OpenDatePickerException(start, end)` → `OPEN_DATE_PICKER` с `data` = казаните дати за попълване на календара; `/api/rooms/available` → `SELECT_ROOMS` с `{startDate, endDate, rooms}`). `UiActionShortCircuitChatModel` прескача следващото извикване към Gemini, а контролерът връща `NewChatResponse(reply, actionType, data)`.
 - Kafka payload = JSON `Map` с `hotelId` и `event`; топици: `hotel-requests-topic` / `hotel-replies-topic` (tools RPC). Логовете не минават през Kafka.
+- **Git:** commit само когато потребителката изрично каже „комитни“. Одобрен план, в който има commit, или „продължи“ не са достатъчни – след промените спри и попитай. Push не се прави никога, прави го тя ръчно.
+- **Ръчни проверки:** потребителката сама чете кода и тества локално и в Render, преди да приеме промени. Не поставяй задачи и бележки от вида „тест в браузъра“, „провери в Atlas“, „провери/изтрий след deploy“, „не е тествано в браузъра“ – нито в отговорите, нито в `PLAN.md`/`SESSIONS_LOG.md`. Казвай само какво си проверил ти (компилация, unit тестове, build, lint).
 
 ## 6. Капани
 - **Тайни в `application.properties`** (Mongo URI с парола, Gemini ключ, Kafka пароли) и приватни ключове/keystore в `src/main/resources/certs/` са в git индекса. Не ги печатай/копирай; препоръчително е да се преместят в env променливи и да се ротират.
