@@ -4,6 +4,7 @@ package com.hotel.langchain.tools;
 import com.hotel.langchain.context.TenantContext;
 import com.hotel.langchain.exception.OpenDatePickerException;
 import com.hotel.langchain.service.HotelBackendClient;
+import com.hotel.langchain.service.RoomBookingService;
 import com.hotel.langchain.service.RoomTypeService;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -20,13 +21,27 @@ public class HotelTools {
 
     private final HotelBackendClient backendClient;
     private final RoomTypeService roomTypeService;
+    private final RoomBookingService roomBookingService;
 
-    public HotelTools(HotelBackendClient backendClient, RoomTypeService roomTypeService) {
+    public HotelTools(HotelBackendClient backendClient, RoomTypeService roomTypeService,
+                      RoomBookingService roomBookingService) {
         this.backendClient = backendClient;
         this.roomTypeService = roomTypeService;
+        this.roomBookingService = roomBookingService;
     }
 
-    @Tool("Връща активните резервации на текущия логнат потребител. Използвай този инструмент, когато клиентът пита за своите резервации.")
+    @Tool("Показва на потребителя предстоящите му резервации като картички с бутон „Откажи“. " +
+            "Използвай ТОЗИ инструмент, когато потребителят иска да откаже или анулира резервация, " +
+            "или иска да види списък с резервациите си. Ти НЕ отказваш резервации – потребителят го прави с бутона.")
+    public String showMyBookings() {
+        // Отговорът отива директно в UI (без второ извикване към Gemini) – виж UiActionShortCircuitChatModel
+        TenantContext.UiAction action = roomBookingService.myBookings(TenantContext.getHotelId(), TenantContext.getUserId());
+        TenantContext.requestUiAction(action);
+        return action.reply();
+    }
+
+    @Tool("Връща резервациите на текущия логнат потребител като данни. Използвай този инструмент, когато клиентът задава въпрос " +
+            "за резервациите си (напр. кога е настаняването или колко струва). За списък с резервации или отказ използвай showMyBookings.")
     public String getReservations() {
         String hotelId = TenantContext.getHotelId();
         String userId = TenantContext.getUserId();

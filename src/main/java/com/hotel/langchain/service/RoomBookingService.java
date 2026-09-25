@@ -19,16 +19,21 @@ public class RoomBookingService {
 
     public static final String SELECT_ROOMS_ACTION = "SELECT_ROOMS";
     public static final String BOOKING_CONFIRMED_ACTION = "BOOKING_CONFIRMED";
+    public static final String MY_BOOKINGS_ACTION = "MY_BOOKINGS";
+    public static final String BOOKING_CANCELED_ACTION = "BOOKING_CANCELED";
 
     private static final DateTimeFormatter BG_DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     private static final String BACKEND_UNAVAILABLE = "Хотелската система не отговаря в момента. Моля, опитайте отново след малко.";
 
     private final HotelBackendClient backendClient;
     private final RoomTypeService roomTypeService;
+    private final ChatHistoryService chatHistoryService;
 
-    public RoomBookingService(HotelBackendClient backendClient, RoomTypeService roomTypeService) {
+    public RoomBookingService(HotelBackendClient backendClient, RoomTypeService roomTypeService,
+                              ChatHistoryService chatHistoryService) {
         this.backendClient = backendClient;
         this.roomTypeService = roomTypeService;
+        this.chatHistoryService = chatHistoryService;
     }
 
     public UiAction findAvailableRooms(String hotelId, String startDateStr, String endDateStr, String roomTypeStr) {
@@ -120,6 +125,76 @@ public class RoomBookingService {
         }
     }
 
+    // Предстоящите потвърдени резервации на потребителя – за картичките с бутон „Откажи“
+    public UiAction myBookings(String hotelId, String userId) {
+        if (userId == null || userId.isBlank()) {
+            return textOnly("Моля, влезте в профила си, за да видите вашите резервации.");
+        }
+        try {
+            Object bookings = backendClient.request(hotelId, "get_upcoming_bookings", Map.of("userId", userId));
+            if (!(bookings instanceof List<?> list) || list.isEmpty()) {
+                return textOnly("Нямате предстоящи резервации.");
+            }
+            return new UiAction(MY_BOOKINGS_ACTION,
+                    "Вашите предстоящи резервации. Резервация може да се откаже най-късно в деня преди настаняването.",
+                    Map.of("bookings", list));
+        } catch (HotelBackendException e) {
+            return textOnly("Грешка при зареждане на резервациите: " + translateBackendError(e.getMessage()));
+        } catch (TimeoutException | InterruptedException e) {
+            return textOnly(BACKEND_UNAVAILABLE);
+        }
+    }
+
+    public UiAction cancelBooking(String hotelId, String userId, String bookingId) {
+        if (userId == null || userId.isBlank()) {
+            return textOnly("Моля, влезте в профила си, за да откажете резервация.");
+        }
+        if (bookingId == null || bookingId.isBlank()) {
+            return textOnly("Не е избрана резервация.");
+        }
+        try {
+            Object booking = backendClient.request(hotelId, "cancel_booking", Map.of(
+                    "userId", userId,
+                    "bookingId", bookingId
+            ));
+            String description = describeBooking(hotelId, booking);
+            String reply = "Резервацията " + description + " е отказана.";
+            chatHistoryService.record(hotelId, userId, "Откажи резервацията " + description + ".", reply);
+            return new UiAction(BOOKING_CANCELED_ACTION, reply, booking);
+        } catch (HotelBackendException e) {
+            return textOnly("Резервацията не беше отказана: " + translateBackendError(e.getMessage()));
+        } catch (TimeoutException | InterruptedException e) {
+            // Не знаем дали бекендът я е отказал – потребителят трябва да провери
+            return textOnly("Хотелската система не потвърди отказа навреме. "
+                    + "Моля, проверете „Моите резервации“, преди да опитате отново.");
+        }
+    }
+
+    // „за стая №12 (Двойна стая) от 30.10.2026 до 03.11.2026“
+    private String describeBooking(String hotelId, Object booking) {
+        if (!(booking instanceof Map<?, ?> map)) {
+            return "";
+        }
+        StringBuilder text = new StringBuilder("за стая №").append(map.get("roomNumber"));
+        if (map.get("roomType") != null) {
+            text.append(" (").append(roomTypeService.nameOf(hotelId, String.valueOf(map.get("roomType")))).append(")");
+        }
+        LocalDate checkIn = parseDateOrNull(map.get("checkInDate"));
+        LocalDate checkOut = parseDateOrNull(map.get("checkOutDate"));
+        if (checkIn != null && checkOut != null) {
+            text.append(" от ").append(checkIn.format(BG_DATE)).append(" до ").append(checkOut.format(BG_DATE));
+        }
+        return text.toString();
+    }
+
+    private LocalDate parseDateOrNull(Object value) {
+        try {
+            return value != null ? LocalDate.parse(String.valueOf(value)) : null;
+        } catch (DateTimeParseException e) {
+            return null;
+        }
+    }
+
     private String validatePeriod(LocalDate startDate, LocalDate endDate) {
         if (!startDate.isBefore(endDate)) {
             return "Датата на напускане трябва да е след датата на настаняване.";
@@ -155,6 +230,9 @@ public class RoomBookingService {
             case "Room not found" -> "стаята не е намерена.";
             case "Invalid dates" -> "невалиден период.";
             case "Invalid room type" -> "невалиден тип стая.";
+            case "Booking not found" -> "резервацията не е намерена.";
+            case "Booking is already canceled" -> "резервацията вече е отказана.";
+            case "Cancellation deadline passed" -> "резервация може да се откаже най-късно в деня преди настаняването.";
             default -> reason;
         };
     }

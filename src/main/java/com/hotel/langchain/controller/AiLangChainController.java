@@ -6,6 +6,7 @@ import com.hotel.langchain.config.RetryingChatLanguageModel;
 import com.hotel.langchain.context.TenantContext;
 import com.hotel.langchain.exception.OpenDatePickerException;
 import com.hotel.langchain.model.Shortcut;
+import com.hotel.langchain.service.ChatHistoryService;
 import com.hotel.langchain.service.KafkaService;
 import com.hotel.langchain.service.RoomBookingService;
 import com.hotel.langchain.service.RoomTypeService;
@@ -78,6 +79,10 @@ public class AiLangChainController {
     public record CreateBookingRequest(String hotelId, String userId, String startDate, String endDate,
                                        List<String> roomIds) {}
 
+    public record MyBookingsRequest(String hotelId, String userId) {}
+
+    public record CancelBookingRequest(String hotelId, String userId, String bookingId) {}
+
     @PostMapping("/chat")
     public NewChatResponse chat(@RequestBody ChatRequest request) {
         System.out.println("Received chat request: " + request);
@@ -109,7 +114,7 @@ public class AiLangChainController {
             System.out.println("hotelId: " + hotelId + ", formattedDate: " + formattedDate + ", dayOfWeek: " + dayOfWeek + ", userText: " + userText);
 
             // Отделна история за всеки хотел и потребител
-            String memoryId = hotelId + ":" + (hasText(request.userId()) ? request.userId() : "anonymous");
+            String memoryId = ChatHistoryService.memoryId(hotelId, request.userId());
             String roomTypes = roomTypeService.describeForPrompt(hotelId);
             String aiReply = assistant.chat(memoryId, hotelId, formattedDate, dayOfWeek, roomTypes, userText);
 
@@ -186,6 +191,11 @@ public class AiLangChainController {
             return new NewChatResponse(OpenDatePickerException.DATE_PICKER_REPLY,
                     OpenDatePickerException.OPEN_DATE_PICKER_ACTION, Map.of());
         }
+        // Бутон „Моите резервации“ – картички с бутон „Откажи“
+        if (shortcut != null && "my_bookings".equals(shortcut.getActionType())) {
+            TenantContext.UiAction result = roomBookingService.myBookings(hotelId, TenantContext.getUserId());
+            return new NewChatResponse(result.reply(), result.actionType(), result.data());
+        }
 
         if (shortcut == null || shortcut.getTargetKnowledgeIds() == null || shortcut.getTargetKnowledgeIds().isEmpty()) {
             return new NewChatResponse("Информацията не е намерена.", null);
@@ -235,6 +245,40 @@ public class AiLangChainController {
         } catch (Exception e) {
             log.error("Booking failed for hotelId={}, userId={}", request.hotelId(), request.userId(), e);
             return new NewChatResponse("Възникна техническа грешка при резервацията. Моля, опитайте по-късно.", null);
+        }
+    }
+
+    // Предстоящите резервации на потребителя като картички (MY_BOOKINGS), без LLM
+    @PostMapping("/bookings/mine")
+    public NewChatResponse myBookings(@RequestBody MyBookingsRequest request) {
+        if (request == null || !hasText(request.hotelId())) {
+            return new NewChatResponse("Липсва хотел.", null);
+        }
+        try {
+            TenantContext.UiAction result = roomBookingService.myBookings(request.hotelId(), request.userId());
+            sendToKafka(request.hotelId(), "My bookings for userId=" + request.userId() + " | Reply: " + result.reply());
+            return new NewChatResponse(result.reply(), result.actionType(), result.data());
+        } catch (Exception e) {
+            log.error("My bookings failed for hotelId={}, userId={}", request.hotelId(), request.userId(), e);
+            return new NewChatResponse("Възникна техническа грешка при зареждане на резервациите. Моля, опитайте по-късно.", null);
+        }
+    }
+
+    // Бутон „Откажи“ на картичка -> отказ директно в booking-system, без LLM; записва се в паметта на чата
+    @PostMapping("/bookings/cancel")
+    public NewChatResponse cancelBooking(@RequestBody CancelBookingRequest request) {
+        if (request == null || !hasText(request.hotelId())) {
+            return new NewChatResponse("Липсва хотел.", null);
+        }
+        try {
+            TenantContext.UiAction result = roomBookingService.cancelBooking(
+                    request.hotelId(), request.userId(), request.bookingId());
+            sendToKafka(request.hotelId(), "Cancel booking " + request.bookingId() + " for userId=" + request.userId()
+                    + " | Reply: " + result.reply());
+            return new NewChatResponse(result.reply(), result.actionType(), result.data());
+        } catch (Exception e) {
+            log.error("Cancel booking failed for hotelId={}, userId={}", request.hotelId(), request.userId(), e);
+            return new NewChatResponse("Възникна техническа грешка при отказа. Моля, опитайте по-късно.", null);
         }
     }
 
