@@ -4,17 +4,19 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-// Един запис в logs_<hotelId> – основа за отчетите в админ страницата.
-// { timestamp, hotelId, userId, type, outcome, errorType, durationMs, userMessage, reply, details }
+// Една заявка към booking-ai – основа за отчетите в админ страницата. Записва се по два начина:
+// - отделен запис в logs_<hotelId> (въпрос в чата, бутон със знание):
+//   { timestamp, hotelId, userId, type, outcome, errorType, durationMs, userMessage, reply, gemini, details }
+// - стъпка в действие от няколко заявки (виж ChatFlow): { step, at, outcome, errorType, durationMs, ... }
 public class ChatLogEntry {
 
-    // type
+    // type на отделен запис / step на стъпка в действие
     public static final String CHAT = "chat";
     public static final String SHORTCUT = "shortcut";
-    public static final String ROOMS_SEARCH = "rooms_search";
+    public static final String MY_BOOKINGS = "my_bookings";
+    public static final String SEARCH = "search";
     public static final String BOOKING = "booking";
     public static final String CANCEL = "cancel";
-    public static final String MY_BOOKINGS = "my_bookings";
 
     // outcome
     public static final String OK = "ok";
@@ -40,6 +42,7 @@ public class ChatLogEntry {
     private String errorType;
     private String userMessage;
     private String reply;
+    private Map<String, Object> gemini;
     private final Map<String, Object> details = new LinkedHashMap<>();
 
     private ChatLogEntry(String type) {
@@ -73,11 +76,65 @@ public class ChatLogEntry {
         return this;
     }
 
+    // Извикванията, токените и tools на Gemini за заявката (null – заявката не е викала модела)
+    public ChatLogEntry gemini(GeminiUsageTracker.Usage usage) {
+        if (usage != null && usage.calls() > 0) {
+            gemini = new LinkedHashMap<>();
+            gemini.put("calls", usage.calls());
+            gemini.put("errors", usage.errors());
+            gemini.put("inputTokens", usage.inputTokens());
+            gemini.put("outputTokens", usage.outputTokens());
+            if (!usage.tools().isEmpty()) {
+                gemini.put("tools", usage.tools());
+            }
+        }
+        return this;
+    }
+
     public ChatLogEntry detail(String key, Object value) {
         if (value != null) {
             details.put(key, value);
         }
         return this;
+    }
+
+    public String outcome() {
+        return outcome;
+    }
+
+    String userId() {
+        return userId;
+    }
+
+    Instant timestamp() {
+        return timestamp;
+    }
+
+    Map<String, Object> gemini() {
+        return gemini;
+    }
+
+    // Стъпка в действие (ChatFlow). Отговорът се пази само при неуспех – иначе е ясен от стъпката.
+    Map<String, Object> toStepDocument() {
+        Map<String, Object> step = new LinkedHashMap<>();
+        step.put("step", type);
+        step.put("at", timestamp);
+        step.put("outcome", outcome);
+        if (errorType != null) {
+            step.put("errorType", errorType);
+        }
+        step.put("durationMs", elapsedMs());
+        if (userMessage != null) {
+            step.put("userMessage", truncate(userMessage));
+        }
+        if (reply != null && !OK.equals(outcome)) {
+            step.put("reply", truncate(reply));
+        }
+        if (gemini != null) {
+            step.put("gemini", gemini);
+        }
+        step.putAll(details);
+        return step;
     }
 
     Map<String, Object> toDocument(String hotelId) {
@@ -90,17 +147,24 @@ public class ChatLogEntry {
         if (errorType != null) {
             doc.put("errorType", errorType);
         }
-        doc.put("durationMs", (System.nanoTime() - startNanos) / 1_000_000);
+        doc.put("durationMs", elapsedMs());
         if (userMessage != null) {
             doc.put("userMessage", truncate(userMessage));
         }
         if (reply != null) {
             doc.put("reply", truncate(reply));
         }
+        if (gemini != null) {
+            doc.put("gemini", gemini);
+        }
         if (!details.isEmpty()) {
             doc.put("details", details);
         }
         return doc;
+    }
+
+    private long elapsedMs() {
+        return (System.nanoTime() - startNanos) / 1_000_000;
     }
 
     private static String truncate(String text) {

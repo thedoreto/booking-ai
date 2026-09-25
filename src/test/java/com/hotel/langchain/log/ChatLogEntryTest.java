@@ -12,7 +12,7 @@ class ChatLogEntryTest {
 
     @Test
     void writesStructuredDocument() {
-        Map<String, Object> doc = ChatLogEntry.start(ChatLogEntry.ROOMS_SEARCH, "user-1")
+        Map<String, Object> doc = ChatLogEntry.start(ChatLogEntry.SEARCH, "user-1")
                 .detail("roomType", "DOUBLE")
                 .detail("roomsFound", 3)
                 .reply("Свободни стаи")
@@ -21,7 +21,7 @@ class ChatLogEntryTest {
         assertThat(doc.get("timestamp")).isInstanceOf(Instant.class);
         assertThat(doc).containsEntry("hotelId", "seven_stars")
                 .containsEntry("userId", "user-1")
-                .containsEntry("type", "rooms_search")
+                .containsEntry("type", "search")
                 .containsEntry("outcome", "ok")
                 .containsEntry("reply", "Свободни стаи")
                 .containsEntry("details", Map.of("roomType", "DOUBLE", "roomsFound", 3))
@@ -54,5 +54,38 @@ class ChatLogEntryTest {
 
         assertThat((String) doc.get("userMessage")).hasSize(ChatLogEntry.MAX_TEXT_LENGTH + 1).endsWith("…");
         assertThat(doc).containsEntry("reply", "кратък");
+    }
+
+    @Test
+    void writesStepWithDetailsAtTopLevelAndReplyOnlyOnFailure() {
+        Map<String, Object> ok = ChatLogEntry.start(ChatLogEntry.SEARCH, "user-1")
+                .detail("roomsFound", 3)
+                .reply("Свободни стаи")
+                .gemini(null)
+                .toStepDocument();
+
+        assertThat(ok.get("at")).isInstanceOf(Instant.class);
+        assertThat(ok).containsEntry("step", "search")
+                .containsEntry("outcome", "ok")
+                .containsEntry("roomsFound", 3)
+                .doesNotContainKeys("reply", "gemini", "details", "errorType");
+
+        Map<String, Object> failed = ChatLogEntry.start(ChatLogEntry.BOOKING, "user-1")
+                .outcome(ChatLogEntry.ERROR, ChatLogEntry.BACKEND_TIMEOUT)
+                .reply("Хотелската система не потвърди резервацията навреме.")
+                .toStepDocument();
+
+        assertThat(failed).containsEntry("outcome", "error")
+                .containsEntry("errorType", "BACKEND_TIMEOUT")
+                .containsEntry("reply", "Хотелската система не потвърди резервацията навреме.");
+    }
+
+    @Test
+    void skipsGeminiWhenModelWasNotCalled() {
+        Map<String, Object> doc = ChatLogEntry.start(ChatLogEntry.CHAT, "user-1")
+                .gemini(new GeminiUsageTracker.Usage())
+                .toDocument("seven_stars");
+
+        assertThat(doc).doesNotContainKey("gemini");
     }
 }

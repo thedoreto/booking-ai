@@ -4,6 +4,9 @@ import jakarta.annotation.PreDestroy;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.index.Index;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -14,9 +17,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
-// Структурирани логове на действията в чата в logs_<hotelId> (виж ChatLogEntry) – за отчетите.
-// Пише се директно в Mongo. Записите се трият автоматично след RETENTION (TTL индекс по timestamp).
+// Структурирани логове в logs_<hotelId> – за отчетите. Пише се директно в Mongo.
+// Отделна заявка (въпрос в чата, бутон със знание) е един запис (ChatLogEntry); действие от няколко
+// заявки (нова резервация, отказ) е един запис, който се допълва с всяка стъпка (ChatFlow).
+// Записите се трият автоматично след RETENTION (TTL индекс по timestamp).
 @Service
 public class ChatLogService {
 
@@ -48,10 +54,41 @@ public class ChatLogService {
             return;
         }
         Map<String, Object> doc = entry.toDocument(hotelId);
+        write(hotelId, collection -> mongoTemplate.insert(doc, collection));
+    }
+
+    // Стъпка в действие: първата стъпка създава записа (upsert), следващите го допълват.
+    // Записите вървят в една нишка, затова стъпките на едно действие се записват по ред.
+    // flowType, startedBy и userId се записват само от първата стъпка.
+    public void logStep(String hotelId, String flowId, String flowType, String startedBy, String status,
+                        ChatLogEntry step) {
+        if (hotelId == null || hotelId.isBlank() || flowId == null || step == null) {
+            return;
+        }
+        Update update = new Update()
+                .setOnInsert("timestamp", step.timestamp())
+                .setOnInsert("hotelId", hotelId)
+                .setOnInsert("userId", step.userId())
+                .setOnInsert("type", flowType)
+                .setOnInsert("startedBy", startedBy)
+                .set("status", status)
+                .set("updatedAt", step.timestamp())
+                .push("steps", step.toStepDocument());
+        Map<String, Object> gemini = step.gemini();
+        if (gemini != null) {
+            update.inc("gemini.calls", (Integer) gemini.get("calls"))
+                    .inc("gemini.inputTokens", (Integer) gemini.get("inputTokens"))
+                    .inc("gemini.outputTokens", (Integer) gemini.get("outputTokens"));
+        }
+        Query query = new Query(Criteria.where("flowId").is(flowId));
+        write(hotelId, collection -> mongoTemplate.upsert(query, update, collection));
+    }
+
+    private void write(String hotelId, Consumer<String> action) {
         String collection = "logs_" + hotelId;
         CompletableFuture.runAsync(() -> {
-            ensureTtlIndex(collection);
-            mongoTemplate.insert(doc, collection);
+            ensureIndexes(collection);
+            action.accept(collection);
         }, executor).exceptionally(e -> {
             System.err.println("Could not save chat log for hotelId=" + hotelId + ": " + e);
             return null;
@@ -67,7 +104,7 @@ public class ChatLogService {
         }
     }
 
-    private void ensureTtlIndex(String collection) {
+    private void ensureIndexes(String collection) {
         if (indexedCollections.contains(collection)) {
             return;
         }
@@ -79,6 +116,15 @@ public class ChatLogService {
         } catch (Exception e) {
             // Напр. вече има индекс по timestamp с други настройки – логът пак се записва
             System.err.println("Could not create TTL index on " + collection + ": " + e.getMessage());
+        }
+        try {
+            // Всяка стъпка търси записа на действието по flowId
+            mongoTemplate.indexOps(collection).ensureIndex(new Index()
+                    .on("flowId", Sort.Direction.ASC)
+                    .sparse()
+                    .named("flowId"));
+        } catch (Exception e) {
+            System.err.println("Could not create flowId index on " + collection + ": " + e.getMessage());
         }
         indexedCollections.add(collection);
     }
