@@ -76,12 +76,13 @@ public class RetryingChatLanguageModel implements ChatLanguageModel {
         }
     }
 
-    // LangChain4j обвива HTTP грешката от Gemini, затова проверяваме цялата верига от причини
+    // LangChain4j обвива HTTP грешката от Gemini, затова проверяваме цялата верига от причини.
+    // Gemini клиентът хвърля "HTTP error (503): <тяло>", а тялото има "status": "UNAVAILABLE".
+    // Не търсим само "503" – числото може да се появи и в друга грешка (id, брой токени).
     public static boolean isModelOverloaded(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
             String msg = t.getMessage();
-            if (msg != null && (msg.contains("503") || msg.contains("UNAVAILABLE")
-                    || msg.contains("high demand") || msg.contains("overloaded"))) {
+            if (msg != null && (msg.contains("HTTP error (503)") || msg.contains("\"UNAVAILABLE\""))) {
                 return true;
             }
         }

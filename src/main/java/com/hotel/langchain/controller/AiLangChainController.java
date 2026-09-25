@@ -182,12 +182,13 @@ public class AiLangChainController {
         }
     }
 
-    // Проверяваме цялата верига от причини, защото LangChain4j обвива HTTP грешката от Gemini
+    // Проверяваме цялата верига от причини, защото LangChain4j обвива HTTP грешката от Gemini.
+    // Gemini клиентът хвърля "HTTP error (429): <тяло>", а тялото при квота има статус RESOURCE_EXHAUSTED.
+    // Не търсим само "429" – числото може да се появи и в друга грешка (id, брой токени).
     private boolean isQuotaExceeded(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
             String msg = t.getMessage();
-            if (msg != null && (msg.contains("429") || msg.contains("Too Many Requests")
-                    || msg.contains("RESOURCE_EXHAUSTED") || msg.contains("quota"))) {
+            if (msg != null && (msg.contains("HTTP error (429)") || msg.contains("RESOURCE_EXHAUSTED"))) {
                 return true;
             }
         }

@@ -51,7 +51,11 @@ public class HotelBackendClient {
             kafkaService.send(REQUEST_TOPIC, hotelId, message);
             return future.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (ExecutionException e) {
-            throw (HotelBackendException) e.getCause();
+            if (e.getCause() instanceof HotelBackendException backendException) {
+                throw backendException;
+            }
+            // Не се очаква: future-ът се проваля само с HotelBackendException
+            throw new IllegalStateException("Unexpected error for event " + event, e.getCause());
         } finally {
             responseFutures.remove(correlationId);
         }
