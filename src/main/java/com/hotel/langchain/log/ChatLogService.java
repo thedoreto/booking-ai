@@ -1,5 +1,6 @@
 package com.hotel.langchain.log;
 
+import jakarta.annotation.PreDestroy;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.index.Index;
@@ -8,8 +9,11 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 // Структурирани логове на действията в чата в logs_<hotelId> (виж ChatLogEntry) – за отчетите.
 // Пише се директно в Mongo. Записите се трият автоматично след RETENTION (TTL индекс по timestamp).
@@ -17,8 +21,20 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ChatLogService {
 
     private static final Duration RETENTION = Duration.ofDays(180);
+    // Колко записа могат да чакат, ако Mongo е бавен; над това новите се изпускат
+    private static final int MAX_PENDING = 1_000;
 
     private final MongoTemplate mongoTemplate;
+    // Една нишка само за логовете: бавен Atlas не заема общия ForkJoinPool и заявките не чакат.
+    // При пълна опашка записът се изпуска със съобщение, вместо да хвърли грешка в заявката.
+    private final ThreadPoolExecutor executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(MAX_PENDING),
+            runnable -> {
+                Thread thread = new Thread(runnable, "chat-log-writer");
+                thread.setDaemon(true);
+                return thread;
+            },
+            (runnable, pool) -> System.err.println("Chat log queue is full, dropping a log entry"));
     // Колекции, за които TTL индексът вече е проверен от тази инстанция
     private final Set<String> indexedCollections = ConcurrentHashMap.newKeySet();
 
@@ -36,10 +52,19 @@ public class ChatLogService {
         CompletableFuture.runAsync(() -> {
             ensureTtlIndex(collection);
             mongoTemplate.insert(doc, collection);
-        }).exceptionally(e -> {
+        }, executor).exceptionally(e -> {
             System.err.println("Could not save chat log for hotelId=" + hotelId + ": " + e);
             return null;
         });
+    }
+
+    // При спиране на приложението: дописва чакащите записи (до 5s)
+    @PreDestroy
+    void shutdown() throws InterruptedException {
+        executor.shutdown();
+        if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+            System.err.println("Chat log writer did not finish, pending entries: " + executor.getQueue().size());
+        }
     }
 
     private void ensureTtlIndex(String collection) {
