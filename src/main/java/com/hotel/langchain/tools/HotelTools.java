@@ -3,7 +3,9 @@ package com.hotel.langchain.tools;
 
 import com.hotel.langchain.context.TenantContext;
 import com.hotel.langchain.exception.OpenDatePickerException;
+import com.hotel.langchain.log.ChatLogEntry;
 import com.hotel.langchain.service.HotelBackendClient;
+import com.hotel.langchain.service.HotelBackendClient.HotelBackendException;
 import com.hotel.langchain.service.RoomBookingService;
 import com.hotel.langchain.service.RoomTypeService;
 import dev.langchain4j.agent.tool.P;
@@ -15,6 +17,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
 
 @Component
 public class HotelTools {
@@ -54,7 +57,7 @@ public class HotelTools {
             Object reservations = backendClient.request(hotelId, "get_reservations", Map.of("userId", userId));
             return backendClient.toJson(reservations);
         } catch (Exception e) {
-            return "Грешка при зареждане на резервациите: " + e.getMessage();
+            return toolError("Грешка при зареждане на резервациите: ", e);
         }
     }
 
@@ -71,7 +74,7 @@ public class HotelTools {
             Object rooms = backendClient.request(hotelId, "get_all_rooms", Map.of());
             return backendClient.toJson(rooms);
         } catch (Exception e) {
-            return "Грешка при връзка с хотелската система: " + e.getMessage();
+            return toolError("Грешка при зареждане на стаите: ", e);
         }
     }
 
@@ -117,6 +120,21 @@ public class HotelTools {
             log.error("Error fetching available rooms for dates", e);
             return List.of();
         }*/
+    }
+
+    // Текст за модела при грешка от бекенда; записва и вида на грешката за логовете на чата
+    private String toolError(String prefix, Exception e) {
+        if (e instanceof HotelBackendException) {
+            TenantContext.reportToolError(ChatLogEntry.BACKEND_ERROR);
+            return prefix + RoomBookingService.translateBackendError(e.getMessage());
+        }
+        if (e instanceof TimeoutException || e instanceof InterruptedException) {
+            TenantContext.reportToolError(ChatLogEntry.BACKEND_TIMEOUT);
+            return RoomBookingService.BACKEND_UNAVAILABLE;
+        }
+        System.err.println("Tool failed: " + e);
+        TenantContext.reportToolError(ChatLogEntry.INTERNAL);
+        return prefix + "техническа грешка.";
     }
 
     // Моделът понякога връща дата и във вид 30.09.2026 или 2026-9-30 вместо YYYY-MM-DD
@@ -166,7 +184,7 @@ public class HotelTools {
         return null;
     }
 
-       @Tool("Връща легендарната рецепта за най-вкусния мъфин с ягоди в света. Използвай този инструмент, само ако клиентът изрично попита за рецепта за мъфини.")
+    @Tool("Връща легендарната рецепта за най-вкусния мъфин с ягоди в света. Използвай този инструмент, само ако клиентът изрично попита за рецепта за мъфини.")
     public String getStrawberryMuffinRecipe() {
         return "🧁 Най-вкусният мъфин с ягоди на света! 🍓\n\n" +
                 "Съставки:\n" +

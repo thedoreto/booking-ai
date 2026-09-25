@@ -4,10 +4,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.hotel.langchain.assistant.Assistant;
 import com.hotel.langchain.config.RetryingChatLanguageModel;
 import com.hotel.langchain.context.TenantContext;
+import com.hotel.langchain.exception.OpenDatePickerException;
 import com.hotel.langchain.log.ChatLogEntry;
 import com.hotel.langchain.log.ChatLogService;
 import com.hotel.langchain.log.GeminiUsageTracker;
-import com.hotel.langchain.exception.OpenDatePickerException;
 import com.hotel.langchain.model.Shortcut;
 import com.hotel.langchain.service.ChatHistoryService;
 import com.hotel.langchain.service.RoomBookingService;
@@ -40,7 +40,6 @@ public class AiLangChainController {
     private final ChatLogService chatLogService;
     private final RoomBookingService roomBookingService;
     private final RoomTypeService roomTypeService;
-
 
     public AiLangChainController(Assistant assistant,
                                  ShortcutService shortcutService,
@@ -84,14 +83,19 @@ public class AiLangChainController {
 
     @PostMapping("/chat")
     public NewChatResponse chat(@RequestBody ChatRequest request) {
-        System.out.println("Received chat request: " + request);
         if (request == null) {
             return new NewChatResponse("Липсва заявка.", null);
+        }
+        // Без текста на съобщенията – той е в logs_<hotelId>, съкратен
+        System.out.println("Received chat request: hotelId=" + request.hotelId() + ", userId=" + request.userId()
+                + ", shortcutId=" + request.shortcutId()
+                + ", messages=" + (request.messages() != null ? request.messages().size() : 0));
+        if (!hasText(request.hotelId())) {
+            return new NewChatResponse("Липсва хотел.", null);
         }
 
         try {
             setTenant(request.hotelId(), request.userId());
-            System.out.println("Tenant set: hotelId=" + request.hotelId() + ", userId=" + request.userId());
             if (hasText(request.shortcutId())) {
                 return handleShortcut(request.hotelId(), request.userId(), request.shortcutId());
             }
@@ -119,7 +123,7 @@ public class AiLangChainController {
             String formattedDate = today.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
             String dayOfWeek = today.getDayOfWeek().getDisplayName(TextStyle.FULL, new Locale("bg", "BG"));
 
-            System.out.println("hotelId: " + hotelId + ", formattedDate: " + formattedDate + ", dayOfWeek: " + dayOfWeek + ", userText: " + userText);
+            System.out.println("hotelId: " + hotelId + ", formattedDate: " + formattedDate + ", dayOfWeek: " + dayOfWeek);
 
             // Отделна история за всеки хотел и потребител
             String memoryId = ChatHistoryService.memoryId(hotelId, request.userId());
@@ -132,6 +136,10 @@ public class AiLangChainController {
                 logEntry.outcome(uiAction.outcome(), uiAction.errorType());
                 response = new NewChatResponse(uiAction.reply(), uiAction.actionType(), uiAction.data());
             } else {
+                // Tool, който връща само текст на модела, е срещнал грешка (напр. timeout на бекенда)
+                if (TenantContext.getToolError() != null) {
+                    logEntry.error(TenantContext.getToolError());
+                }
                 response = new NewChatResponse(aiReply, null);
             }
 
@@ -191,7 +199,7 @@ public class AiLangChainController {
     }
 
     private NewChatResponse handleShortcut(String hotelId, String userId, String shortcutId) {
-        System.out.println("hotelId: " + hotelId + "shortcutId: " + shortcutId);
+        System.out.println("hotelId: " + hotelId + ", shortcutId: " + shortcutId);
         ChatLogEntry logEntry = ChatLogEntry.start(ChatLogEntry.SHORTCUT, userId).detail("shortcutId", shortcutId);
         NewChatResponse response;
         try {
@@ -225,13 +233,13 @@ public class AiLangChainController {
             return new NewChatResponse(result.reply(), result.actionType(), result.data());
         }
 
-        if (shortcut.getTargetKnowledgeIds() == null || shortcut.getTargetKnowledgeIds().isEmpty()) {
+        List<ObjectId> knowledgeIds = shortcut.getTargetKnowledgeIds();
+        if (knowledgeIds == null || knowledgeIds.isEmpty() || knowledgeIds.get(0) == null) {
             logEntry.outcome(ChatLogEntry.NO_RESULT, null);
             return new NewChatResponse(NOT_FOUND_REPLY, null);
         }
 
-        String knowledgeId = shortcut.getTargetKnowledgeIds().get(0).toString();
-        Document knowledgeDoc = mongoTemplate.findById(new ObjectId(knowledgeId), Document.class, "knowledge_" + hotelId);
+        Document knowledgeDoc = mongoTemplate.findById(knowledgeIds.get(0), Document.class, "knowledge_" + hotelId);
 
         if (knowledgeDoc != null && knowledgeDoc.getString("text") != null) {
             return new NewChatResponse(knowledgeDoc.getString("text"), null);

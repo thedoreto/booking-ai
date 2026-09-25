@@ -24,7 +24,7 @@ public class RoomBookingService {
     public static final String BOOKING_CANCELED_ACTION = "BOOKING_CANCELED";
 
     private static final DateTimeFormatter BG_DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
-    private static final String BACKEND_UNAVAILABLE = "Хотелската система не отговаря в момента. Моля, опитайте отново след малко.";
+    public static final String BACKEND_UNAVAILABLE = "Хотелската система не отговаря в момента. Моля, опитайте отново след малко.";
 
     private final HotelBackendClient backendClient;
     private final RoomTypeService roomTypeService;
@@ -238,7 +238,8 @@ public class RoomBookingService {
     }
 
     // booking-system връща причините на английски (ResponseStatusException reason)
-    private String translateBackendError(String reason) {
+    // Съобщенията за грешка от booking-system на български (ползва се и от HotelTools)
+    public static String translateBackendError(String reason) {
         return switch (reason) {
             case "Room not available" -> "някоя от избраните стаи вече е заета. Моля, потърсете отново свободни стаи.";
             case "User not found" -> "потребителят не е намерен.";
