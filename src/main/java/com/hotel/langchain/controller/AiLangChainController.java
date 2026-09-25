@@ -16,8 +16,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.bson.Document;
 import org.bson.types.ObjectId;
 import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.*;
 
@@ -179,12 +177,7 @@ public class AiLangChainController {
 
     private NewChatResponse handleShortcut(String hotelId, String shortcutId) {
         System.out.println("hotelId: " + hotelId + "shortcutId: " + shortcutId);
-        String shortcutsCollection = "shortcuts_" + hotelId;
-        Shortcut shortcut = mongoTemplate.findOne(
-                new Query(Criteria.where("shortcutId").is(shortcutId)),
-                Shortcut.class,
-                shortcutsCollection
-        );
+        Shortcut shortcut = shortcutService.findActiveShortcut(hotelId, shortcutId);
 
         // Бутон „Нова резервация“ – UI отваря календара сам; това е за клиенти, които все пак пращат shortcutId
         if (shortcut != null && "open_date_picker".equals(shortcut.getActionType())) {

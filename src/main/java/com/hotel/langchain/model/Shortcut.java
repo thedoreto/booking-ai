@@ -3,6 +3,7 @@ package com.hotel.langchain.model;
 import org.bson.types.ObjectId;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.mapping.Field;
 import java.util.List;
 
 @Document(collection = "shortcuts_#hotelId#") // Динамично мапване или без анотация, ако ползваш MongoTemplate с изрично име
@@ -15,7 +16,9 @@ public class Shortcut {
     private String category;
     private String actionType;
     private List<ObjectId> targetKnowledgeIds;
-    private boolean isActive;
+    // В Mongo полето е is_active; липсващо поле = активен бутон
+    @Field("is_active")
+    private Boolean isActive;
 
     // Getters and Setters
     public String getId() { return id; }
@@ -36,6 +39,6 @@ public class Shortcut {
     public List<ObjectId> getTargetKnowledgeIds() { return targetKnowledgeIds; }
     public void setTargetKnowledgeIds(List<ObjectId> targetKnowledgeIds) { this.targetKnowledgeIds = targetKnowledgeIds; }
 
-    public boolean isActive() { return isActive; }
-    public void setIsActive(boolean isActive) { this.isActive = isActive; }
+    public boolean isActive() { return isActive == null || isActive; }
+    public void setIsActive(Boolean isActive) { this.isActive = isActive; }
 }

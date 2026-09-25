@@ -22,4 +22,12 @@ public class ShortcutService {
         }
         return shortcutRepository.findAllByHotelId(hotelId);
     }
+
+    // null, ако бутонът липсва или е неактивен
+    public Shortcut findActiveShortcut(String hotelId, String shortcutId) {
+        if (hotelId == null || hotelId.isBlank() || shortcutId == null || shortcutId.isBlank()) {
+            return null;
+        }
+        return shortcutRepository.findActiveByShortcutId(hotelId, shortcutId);
+    }
 }
