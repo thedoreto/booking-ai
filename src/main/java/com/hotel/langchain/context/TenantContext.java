@@ -6,7 +6,12 @@ public class TenantContext {
     // Действие за UI, поискано от tool по време на заявката (календар, избор на стаи...)
     private static final ThreadLocal<UiAction> UI_ACTION = new ThreadLocal<>();
 
-    public record UiAction(String actionType, String reply, Object data) {}
+    // outcome/errorType – за логовете (ChatLogEntry): ok, no_result, rejected, error
+    public record UiAction(String actionType, String reply, Object data, String outcome, String errorType) {
+        public UiAction(String actionType, String reply, Object data) {
+            this(actionType, reply, data, "ok", null);
+        }
+    }
 
     public static void setHotelId(String hotelId) {
         CURRENT_HOTEL_ID.set(hotelId);

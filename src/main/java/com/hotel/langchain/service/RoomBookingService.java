@@ -1,6 +1,7 @@
 package com.hotel.langchain.service;
 
 import com.hotel.langchain.context.TenantContext.UiAction;
+import com.hotel.langchain.log.ChatLogEntry;
 import com.hotel.langchain.service.HotelBackendClient.HotelBackendException;
 import org.springframework.stereotype.Service;
 
@@ -43,11 +44,11 @@ public class RoomBookingService {
             startDate = LocalDate.parse(startDateStr);
             endDate = LocalDate.parse(endDateStr);
         } catch (DateTimeParseException | NullPointerException e) {
-            return textOnly("Невалидни дати. Моля, изберете период от календара.");
+            return rejected("Невалидни дати. Моля, изберете период от календара.");
         }
         String periodError = validatePeriod(startDate, endDate);
         if (periodError != null) {
-            return textOnly(periodError);
+            return rejected(periodError);
         }
 
         String roomType = roomTypeService.normalize(hotelId, roomTypeStr);
@@ -66,7 +67,7 @@ public class RoomBookingService {
                     : "стаи";
 
             if (!(rooms instanceof List<?> roomList) || roomList.isEmpty()) {
-                return textOnly("За периода " + period + " няма свободни " + what + ". Опитайте с други дати"
+                return noResult("За периода " + period + " няма свободни " + what + ". Опитайте с други дати"
                         + (roomType != null ? " или друг тип стая." : "."));
             }
             Map<String, Object> data = new HashMap<>();
@@ -81,19 +82,19 @@ public class RoomBookingService {
                     "Свободни " + what + " за периода " + period + ". Изберете една или повече стаи:",
                     data);
         } catch (HotelBackendException e) {
-            return textOnly("Грешка при търсене на свободни стаи: " + translateBackendError(e.getMessage()));
+            return backendError("Грешка при търсене на свободни стаи: " + translateBackendError(e.getMessage()));
         } catch (TimeoutException | InterruptedException e) {
-            return textOnly(BACKEND_UNAVAILABLE);
+            return backendTimeout(BACKEND_UNAVAILABLE);
         }
     }
 
     public UiAction createBookings(String hotelId, String userId, String startDateStr, String endDateStr,
                                    List<String> roomIds) {
         if (userId == null || userId.isBlank()) {
-            return textOnly("Моля, влезте в профила си, за да направите резервация.");
+            return rejected("Моля, влезте в профила си, за да направите резервация.");
         }
         if (roomIds == null || roomIds.isEmpty()) {
-            return textOnly("Моля, изберете поне една стая.");
+            return rejected("Моля, изберете поне една стая.");
         }
         LocalDate startDate;
         LocalDate endDate;
@@ -101,11 +102,11 @@ public class RoomBookingService {
             startDate = LocalDate.parse(startDateStr);
             endDate = LocalDate.parse(endDateStr);
         } catch (DateTimeParseException | NullPointerException e) {
-            return textOnly("Невалидни дати за резервацията.");
+            return rejected("Невалидни дати за резервацията.");
         }
         String periodError = validatePeriod(startDate, endDate);
         if (periodError != null) {
-            return textOnly(periodError);
+            return rejected(periodError);
         }
 
         try {
@@ -120,10 +121,10 @@ public class RoomBookingService {
                     + startDate.format(BG_DATE) + " до " + endDate.format(BG_DATE) + ".", reply);
             return new UiAction(BOOKING_CONFIRMED_ACTION, reply, bookings);
         } catch (HotelBackendException e) {
-            return textOnly("Резервацията не беше направена: " + translateBackendError(e.getMessage()));
+            return backendError("Резервацията не беше направена: " + translateBackendError(e.getMessage()));
         } catch (TimeoutException | InterruptedException e) {
             // Не знаем дали бекендът я е записал – потребителят трябва да провери
-            return textOnly("Хотелската система не потвърди резервацията навреме. "
+            return backendTimeout("Хотелската система не потвърди резервацията навреме. "
                     + "Моля, проверете „Моите резервации“, преди да опитате отново.");
         }
     }
@@ -131,29 +132,29 @@ public class RoomBookingService {
     // Предстоящите потвърдени резервации на потребителя – за картичките с бутон „Откажи“
     public UiAction myBookings(String hotelId, String userId) {
         if (userId == null || userId.isBlank()) {
-            return textOnly("Моля, влезте в профила си, за да видите вашите резервации.");
+            return rejected("Моля, влезте в профила си, за да видите вашите резервации.");
         }
         try {
             Object bookings = backendClient.request(hotelId, "get_upcoming_bookings", Map.of("userId", userId));
             if (!(bookings instanceof List<?> list) || list.isEmpty()) {
-                return textOnly("Нямате предстоящи резервации.");
+                return noResult("Нямате предстоящи резервации.");
             }
             return new UiAction(MY_BOOKINGS_ACTION,
                     "Вашите предстоящи резервации. Резервация може да се откаже най-късно в деня преди настаняването.",
                     Map.of("bookings", list));
         } catch (HotelBackendException e) {
-            return textOnly("Грешка при зареждане на резервациите: " + translateBackendError(e.getMessage()));
+            return backendError("Грешка при зареждане на резервациите: " + translateBackendError(e.getMessage()));
         } catch (TimeoutException | InterruptedException e) {
-            return textOnly(BACKEND_UNAVAILABLE);
+            return backendTimeout(BACKEND_UNAVAILABLE);
         }
     }
 
     public UiAction cancelBooking(String hotelId, String userId, String bookingId) {
         if (userId == null || userId.isBlank()) {
-            return textOnly("Моля, влезте в профила си, за да откажете резервация.");
+            return rejected("Моля, влезте в профила си, за да откажете резервация.");
         }
         if (bookingId == null || bookingId.isBlank()) {
-            return textOnly("Не е избрана резервация.");
+            return rejected("Не е избрана резервация.");
         }
         try {
             Object booking = backendClient.request(hotelId, "cancel_booking", Map.of(
@@ -165,10 +166,10 @@ public class RoomBookingService {
             chatHistoryService.record(hotelId, userId, "Откажи резервацията " + description + ".", reply);
             return new UiAction(BOOKING_CANCELED_ACTION, reply, booking);
         } catch (HotelBackendException e) {
-            return textOnly("Резервацията не беше отказана: " + translateBackendError(e.getMessage()));
+            return backendError("Резервацията не беше отказана: " + translateBackendError(e.getMessage()));
         } catch (TimeoutException | InterruptedException e) {
             // Не знаем дали бекендът я е отказал – потребителят трябва да провери
-            return textOnly("Хотелската система не потвърди отказа навреме. "
+            return backendTimeout("Хотелската система не потвърди отказа навреме. "
                     + "Моля, проверете „Моите резервации“, преди да опитате отново.");
         }
     }
@@ -255,7 +256,20 @@ public class RoomBookingService {
         return value instanceof Number n ? n.doubleValue() : 0;
     }
 
-    private UiAction textOnly(String reply) {
-        return new UiAction(null, reply, null);
+    // Само текст, без действие в UI; outcome/errorType са за логовете
+    private UiAction rejected(String reply) {
+        return new UiAction(null, reply, null, ChatLogEntry.REJECTED, null);
+    }
+
+    private UiAction noResult(String reply) {
+        return new UiAction(null, reply, null, ChatLogEntry.NO_RESULT, null);
+    }
+
+    private UiAction backendError(String reply) {
+        return new UiAction(null, reply, null, ChatLogEntry.ERROR, ChatLogEntry.BACKEND_ERROR);
+    }
+
+    private UiAction backendTimeout(String reply) {
+        return new UiAction(null, reply, null, ChatLogEntry.ERROR, ChatLogEntry.BACKEND_TIMEOUT);
     }
 }

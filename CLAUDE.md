@@ -23,7 +23,7 @@
 - `langchain/context/TenantContext` – ThreadLocal за hotelId/userId
 - `langchain/config` – `AiConfig` (Gemini beans), `LangChainConfig` (ChatMemory), `KafkaCertInitializer`
 - `langchain/service|repository|model` – Shortcuts и `KafkaService` (producer)
-- `langchain/log/KafkaMessageConsumer` – слуша всички топици и пише логове в `logs_<hotelId>`
+- `langchain/log` – структурирани логове за отчетите в `logs_<hotelId>`: `ChatLogEntry` (`type`, `outcome`, `errorType`, `durationMs`, текстове до 500 знака, `details`), `ChatLogService` (асинхронен запис директно в Mongo, TTL индекс 180 дни по `timestamp`), `GeminiUsageTracker` (`ChatModelListener`: извиквания, токени и tools на Gemini за текущата заявка)
 - `knowledge/` – `KnowledgeService` (embed + vector search), `KnowledgeRepository`, `KnowledgeDocument`
 
 ## 4. Команди
@@ -41,7 +41,7 @@ docker build -t booking-ai .       # Docker образ (слуша на $PORT, d
 - Потребителските съобщения и промптове са на български; отговорите на асистента също.
 - Error handling: контролерът хваща всичко и връща `NewChatResponse(reply, actionType)` с приятелско съобщение – без HTTP error кодове. Грешките се логват предимно с `System.out/err` (не с SLF4J).
 - UI действие: tool записва `TenantContext.UiAction(actionType, reply, data)` (`OpenDatePickerException(start, end)` → `OPEN_DATE_PICKER` с `data` = казаните дати за попълване на календара; `/api/rooms/available` → `SELECT_ROOMS` с `{startDate, endDate, rooms}`). `UiActionShortCircuitChatModel` прескача следващото извикване към Gemini, а контролерът връща `NewChatResponse(reply, actionType, data)`.
-- Kafka payload = JSON `Map` с `hotelId` и `event`; топици: `test-topic` (логове), `hotel-requests-topic` / `hotel-replies-topic` (tools RPC).
+- Kafka payload = JSON `Map` с `hotelId` и `event`; топици: `hotel-requests-topic` / `hotel-replies-topic` (tools RPC). Логовете не минават през Kafka.
 
 ## 6. Капани
 - **Тайни в `application.properties`** (Mongo URI с парола, Gemini ключ, Kafka пароли) и приватни ключове/keystore в `src/main/resources/certs/` са в git индекса. Не ги печатай/копирай; препоръчително е да се преместят в env променливи и да се ротират.
@@ -50,8 +50,7 @@ docker build -t booking-ai .       # Docker образ (слуша на $PORT, d
 - `Assistant.chat(hotelName, ...)` получава `hotelId` като `{hotelName}`. Конфигурираният `ChatMemory` е **един общ бийн без memoryId** – историята не е по потребител/хотел; контролерът подава само последното съобщение.
 - `TenantContext.getHotelId()` връща дефолт `"knowledge_seven_stars"`, ако липсва hotelId (а retriever добавя още `knowledge_` префикс → двойно).
 - `HotelTools.getAvailableRoomsByDates` не търси стаи: винаги хвърля `OpenDatePickerException` с валидните казани дати (минали/невалидни се изпускат); стаите идват после от `/api/rooms/available`. Късен отговор след timeout се игнорира – при `create_booking` резервацията може да е записана, въпреки че потребителят вижда грешка. Има и шеговит tool `getStrawberryMuffinRecipe`.
-- `/api/rooms/available` и `/api/bookings` вярват на `userId` от body-то (няма auth) и не минават през chat паметта – LLM-ът не знае за резервации, направени с бутона.
-- `KafkaMessageConsumer` е с `topicPattern=".*"`: консумира и собствените си съобщения (вкл. RPC заявки/отговори) и ги записва като логове; очаква поле `event` като низ.
+- `/api/rooms/available`, `/api/bookings`, `/api/bookings/mine` и `/api/bookings/cancel` вярват на `userId` от body-то (няма auth). Резервациите и отказите с бутон минават без LLM, но `ChatHistoryService` ги записва в паметта на разговора.
 - Backend микросервисът, който отговаря на `hotel-requests-topic`, не е в това repo – tools зависят от него (5s timeout).
 - `KnowledgeRepository` е с твърдо кодирани `numCandidates=100`, `limit=5`; Atlas vector индексът трябва да съществува във всяка `knowledge_<hotelId>` колекция.
 - В `Shortcut` анотацията `@Document(collection="shortcuts_#hotelId#")` е само декоративна – реалното име се подава през `MongoTemplate`.

@@ -1,5 +1,6 @@
 package com.hotel.langchain.config;
 
+import com.hotel.langchain.log.GeminiUsageTracker;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.googleai.GoogleAiEmbeddingModel;
@@ -7,6 +8,8 @@ import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.util.List;
 
 @Configuration
 public class AiConfig {
@@ -23,6 +26,7 @@ public class AiConfig {
                 .apiKey(apiKey)
                 .modelName(baseModel)
                 .maxRetries(1) // повторните опити са в RetryingChatLanguageModel
+                .listeners(List.of(new GeminiUsageTracker())) // токени и tools за логовете
                 .build();
         // При 503 от Gemini: нов опит след 2s, 5s и 10s
         ChatLanguageModel retrying = new RetryingChatLanguageModel(gemini, 2_000, 5_000, 10_000);
