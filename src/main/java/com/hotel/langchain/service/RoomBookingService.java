@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
@@ -23,12 +24,14 @@ public class RoomBookingService {
     private static final String BACKEND_UNAVAILABLE = "Хотелската система не отговаря в момента. Моля, опитайте отново след малко.";
 
     private final HotelBackendClient backendClient;
+    private final RoomTypeService roomTypeService;
 
-    public RoomBookingService(HotelBackendClient backendClient) {
+    public RoomBookingService(HotelBackendClient backendClient, RoomTypeService roomTypeService) {
         this.backendClient = backendClient;
+        this.roomTypeService = roomTypeService;
     }
 
-    public UiAction findAvailableRooms(String hotelId, String startDateStr, String endDateStr) {
+    public UiAction findAvailableRooms(String hotelId, String startDateStr, String endDateStr, String roomTypeStr) {
         LocalDate startDate;
         LocalDate endDate;
         try {
@@ -42,26 +45,38 @@ public class RoomBookingService {
             return textOnly(periodError);
         }
 
+        String roomType = roomTypeService.normalize(hotelId, roomTypeStr);
+
         try {
-            Object rooms = backendClient.request(hotelId, "get_available_rooms_by_dates", Map.of(
-                    "startDate", startDate.toString(),
-                    "endDate", endDate.toString()
-            ));
+            Map<String, Object> params = new HashMap<>();
+            params.put("startDate", startDate.toString());
+            params.put("endDate", endDate.toString());
+            if (roomType != null) {
+                params.put("roomType", roomType);
+            }
+            Object rooms = backendClient.request(hotelId, "get_available_rooms_by_dates", params);
             String period = "от " + startDate.format(BG_DATE) + " до " + endDate.format(BG_DATE);
+            String what = roomType != null
+                    ? "стаи от тип „" + roomTypeService.nameOf(hotelId, roomType) + "“"
+                    : "стаи";
 
             if (!(rooms instanceof List<?> roomList) || roomList.isEmpty()) {
-                return textOnly("За периода " + period + " няма свободни стаи. Опитайте с други дати.");
+                return textOnly("За периода " + period + " няма свободни " + what + ". Опитайте с други дати"
+                        + (roomType != null ? " или друг тип стая." : "."));
+            }
+            Map<String, Object> data = new HashMap<>();
+            data.put("startDate", startDate.toString());
+            data.put("endDate", endDate.toString());
+            data.put("rooms", roomList);
+            if (roomType != null) {
+                data.put("roomType", roomType);
             }
             return new UiAction(
                     SELECT_ROOMS_ACTION,
-                    "Свободни стаи за периода " + period + ". Изберете една или повече стаи:",
-                    Map.of(
-                            "startDate", startDate.toString(),
-                            "endDate", endDate.toString(),
-                            "rooms", roomList
-                    ));
+                    "Свободни " + what + " за периода " + period + ". Изберете една или повече стаи:",
+                    data);
         } catch (HotelBackendException e) {
-            return textOnly("Грешка при търсене на свободни стаи: " + e.getMessage());
+            return textOnly("Грешка при търсене на свободни стаи: " + translateBackendError(e.getMessage()));
         } catch (TimeoutException | InterruptedException e) {
             return textOnly(BACKEND_UNAVAILABLE);
         }
@@ -139,6 +154,7 @@ public class RoomBookingService {
             case "User not found" -> "потребителят не е намерен.";
             case "Room not found" -> "стаята не е намерена.";
             case "Invalid dates" -> "невалиден период.";
+            case "Invalid room type" -> "невалиден тип стая.";
             default -> reason;
         };
     }

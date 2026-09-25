@@ -4,6 +4,7 @@ package com.hotel.langchain.tools;
 import com.hotel.langchain.context.TenantContext;
 import com.hotel.langchain.exception.OpenDatePickerException;
 import com.hotel.langchain.service.HotelBackendClient;
+import com.hotel.langchain.service.RoomTypeService;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
@@ -18,9 +19,11 @@ import java.util.Map;
 public class HotelTools {
 
     private final HotelBackendClient backendClient;
+    private final RoomTypeService roomTypeService;
 
-    public HotelTools(HotelBackendClient backendClient) {
+    public HotelTools(HotelBackendClient backendClient, RoomTypeService roomTypeService) {
         this.backendClient = backendClient;
+        this.roomTypeService = roomTypeService;
     }
 
     @Tool("Връща активните резервации на текущия логнат потребител. Използвай този инструмент, когато клиентът пита за своите резервации.")
@@ -61,10 +64,12 @@ public class HotelTools {
             "Използвай ТОЗИ инструмент винаги, когато потребителят пита за свободни стаи, резервация или настаняване. " +
             "Подай датите, които потребителят е казал, във формат YYYY-MM-DD: само начална дата (напр. 'за 30 октомври'), " +
             "или начална и крайна (напр. 'от 30 октомври до 3 ноември'). За дата, която не е казана, подай null - не измисляй дати. " +
-            "Ако годината не е казана, вземи най-близката бъдеща такава дата. Никога не питай за дати с обикновен текст.")
+            "Ако годината не е казана, вземи най-близката бъдеща такава дата. Никога не питай за дати с обикновен текст. " +
+            "Ако потребителят е казал тип стая, подай кода му от списъка с типове стаи в системните инструкции; иначе null.")
     public String getAvailableRoomsByDates(
             @P(value = "Начална дата (настаняване) във формат YYYY-MM-DD, или null ако не е казана", required = false) String startDateStr,
-            @P(value = "Крайна дата (напускане) във формат YYYY-MM-DD, или null ако не е казана", required = false) String endDateStr) {
+            @P(value = "Крайна дата (напускане) във формат YYYY-MM-DD, или null ако не е казана", required = false) String endDateStr,
+            @P(value = "Код на тип стая (напр. DOUBLE), или null ако не е казан", required = false) String roomType) {
        String hotelId = TenantContext.getHotelId();
 
        System.out.println("Hotel ID: " + hotelId + ", Start Date: " + startDateStr + ", End Date: " + endDateStr);
@@ -75,8 +80,10 @@ public class HotelTools {
        LocalDate startDate = rollToFuture(parseDate(startDateStr), today);
        LocalDate endDate = rollToFuture(parseDate(endDateStr), startDate != null ? startDate.plusDays(1) : today.plusDays(1));
 
-       System.out.println("Date picker prefill: startDate=" + startDate + ", endDate=" + endDate);
-       throw new OpenDatePickerException(startDate, endDate);
+       String type = roomTypeService.normalize(hotelId, roomType);
+
+       System.out.println("Date picker prefill: startDate=" + startDate + ", endDate=" + endDate + ", roomType=" + type);
+       throw new OpenDatePickerException(startDate, endDate, type);
        /*     @dev.langchain4j.agent.tool.P("Начална дата на настаняване във формат YYYY-MM-DD") LocalDate fromDate,
             @dev.langchain4j.agent.tool.P("Крайна дата на напускане във формат YYYY-MM-DD") LocalDate toDate
     ) {

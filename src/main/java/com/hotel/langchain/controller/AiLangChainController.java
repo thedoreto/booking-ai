@@ -4,9 +4,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.hotel.langchain.assistant.Assistant;
 import com.hotel.langchain.config.RetryingChatLanguageModel;
 import com.hotel.langchain.context.TenantContext;
+import com.hotel.langchain.exception.OpenDatePickerException;
 import com.hotel.langchain.model.Shortcut;
 import com.hotel.langchain.service.KafkaService;
 import com.hotel.langchain.service.RoomBookingService;
+import com.hotel.langchain.service.RoomTypeService;
 import com.hotel.langchain.service.ShortcutService;
 import dev.langchain4j.data.message.ChatMessage;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +38,7 @@ public class AiLangChainController {
     private final MongoTemplate mongoTemplate;
     private final KafkaService kafkaService;
     private final RoomBookingService roomBookingService;
+    private final RoomTypeService roomTypeService;
 
     private static final String KAFKA_TOPIC = "test-topic";
 
@@ -43,12 +46,14 @@ public class AiLangChainController {
                                  ShortcutService shortcutService,
                                  MongoTemplate mongoTemplate,
                                  KafkaService  kafkaService,
-                                 RoomBookingService roomBookingService) {
+                                 RoomBookingService roomBookingService,
+                                 RoomTypeService roomTypeService) {
         this.assistant = assistant;
         this.shortcutService = shortcutService;
         this.mongoTemplate = mongoTemplate;
         this.kafkaService = kafkaService;
         this.roomBookingService = roomBookingService;
+        this.roomTypeService = roomTypeService;
     }
 
     public record Message(String role, String content) {}
@@ -67,7 +72,8 @@ public class AiLangChainController {
         }
     }
 
-    public record AvailableRoomsRequest(String hotelId, String userId, String startDate, String endDate) {}
+    public record AvailableRoomsRequest(String hotelId, String userId, String startDate, String endDate,
+                                        String roomType) {}
 
     public record CreateBookingRequest(String hotelId, String userId, String startDate, String endDate,
                                        List<String> roomIds) {}
@@ -104,7 +110,8 @@ public class AiLangChainController {
 
             // Отделна история за всеки хотел и потребител
             String memoryId = hotelId + ":" + (hasText(request.userId()) ? request.userId() : "anonymous");
-            String aiReply = assistant.chat(memoryId, hotelId, formattedDate, dayOfWeek, userText);
+            String roomTypes = roomTypeService.describeForPrompt(hotelId);
+            String aiReply = assistant.chat(memoryId, hotelId, formattedDate, dayOfWeek, roomTypes, userText);
 
             sendToKafka(hotelId, "User message: " + userText + " | AI Reply: " + aiReply);
 
@@ -174,6 +181,12 @@ public class AiLangChainController {
                 shortcutsCollection
         );
 
+        // Бутон „Нова резервация“ – UI отваря календара сам; това е за клиенти, които все пак пращат shortcutId
+        if (shortcut != null && "open_date_picker".equals(shortcut.getActionType())) {
+            return new NewChatResponse(OpenDatePickerException.DATE_PICKER_REPLY,
+                    OpenDatePickerException.OPEN_DATE_PICKER_ACTION, Map.of());
+        }
+
         if (shortcut == null || shortcut.getTargetKnowledgeIds() == null || shortcut.getTargetKnowledgeIds().isEmpty()) {
             return new NewChatResponse("Информацията не е намерена.", null);
         }
@@ -196,8 +209,9 @@ public class AiLangChainController {
         }
         try {
             TenantContext.UiAction result = roomBookingService.findAvailableRooms(
-                    request.hotelId(), request.startDate(), request.endDate());
+                    request.hotelId(), request.startDate(), request.endDate(), request.roomType());
             sendToKafka(request.hotelId(), "Available rooms " + request.startDate() + " - " + request.endDate()
+                    + (hasText(request.roomType()) ? " type=" + request.roomType() : "")
                     + " | Reply: " + result.reply());
             return new NewChatResponse(result.reply(), result.actionType(), result.data());
         } catch (Exception e) {
@@ -222,6 +236,12 @@ public class AiLangChainController {
             log.error("Booking failed for hotelId={}, userId={}", request.hotelId(), request.userId(), e);
             return new NewChatResponse("Възникна техническа грешка при резервацията. Моля, опитайте по-късно.", null);
         }
+    }
+
+    // Типовете стаи на хотела ({code, name}) – за избора в UI; идват от booking-system
+    @GetMapping("/rooms/types")
+    public List<RoomTypeService.RoomType> getRoomTypes(@RequestParam String hotelId) {
+        return roomTypeService.getRoomTypes(hotelId);
     }
 
     @GetMapping("/shortcuts")
