@@ -115,7 +115,10 @@ public class RoomBookingService {
                     "startDate", startDate.toString(),
                     "endDate", endDate.toString()
             ));
-            return new UiAction(BOOKING_CONFIRMED_ACTION, confirmationText(bookings, startDate, endDate), bookings);
+            String reply = confirmationText(bookings, startDate, endDate);
+            chatHistoryService.record(hotelId, userId, "Резервирай " + roomNumbersText(bookings) + " от "
+                    + startDate.format(BG_DATE) + " до " + endDate.format(BG_DATE) + ".", reply);
+            return new UiAction(BOOKING_CONFIRMED_ACTION, reply, bookings);
         } catch (HotelBackendException e) {
             return textOnly("Резервацията не беше направена: " + translateBackendError(e.getMessage()));
         } catch (TimeoutException | InterruptedException e) {
@@ -220,6 +223,17 @@ public class RoomBookingService {
             }
         }
         return text.append("\nОбща сума: ").append(String.format("%.2f", total)).append(" лв.").toString();
+    }
+
+    // „стая №12“ или „стаи №12, №15“
+    private String roomNumbersText(Object bookings) {
+        List<String> numbers = bookings instanceof List<?> list
+                ? list.stream()
+                        .filter(item -> item instanceof Map<?, ?>)
+                        .map(item -> "№" + ((Map<?, ?>) item).get("roomNumber"))
+                        .toList()
+                : List.of();
+        return (numbers.size() == 1 ? "стая " : "стаи ") + String.join(", ", numbers);
     }
 
     // booking-system връща причините на английски (ResponseStatusException reason)
