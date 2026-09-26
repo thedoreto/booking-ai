@@ -69,7 +69,8 @@ public class AiLangChainController {
             String hotelId,
             List<Message> messages,
             @JsonProperty("shortcutId") String shortcutId,
-            String flowId // текущата нова резервация в UI (виж ChatFlow), ако има
+            String flowId, // текущата нова резервация в UI (виж ChatFlow), ако има
+            String sessionId // разговорът в UI (UUID) – отделна памет за всеки гост
     ) {}
 
     // data: допълнителни данни за actionType (напр. списък стаи при SELECT_ROOMS)
@@ -136,7 +137,7 @@ public class AiLangChainController {
             System.out.println("hotelId: " + hotelId + ", formattedDate: " + formattedDate + ", dayOfWeek: " + dayOfWeek);
 
             // Отделна история за всеки хотел и потребител
-            String memoryId = ChatHistoryService.memoryId(hotelId, user);
+            String memoryId = ChatHistoryService.memoryId(hotelId, user, request.sessionId());
             String roomTypes = roomTypeService.describeForPrompt(hotelId);
             String aiReply = assistant.chat(memoryId, hotelId, formattedDate, dayOfWeek, roomTypes, userText);
 
