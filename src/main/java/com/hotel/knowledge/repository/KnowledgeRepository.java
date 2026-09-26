@@ -2,10 +2,16 @@ package com.hotel.knowledge.repository;
 
 import com.hotel.knowledge.model.KnowledgeDocument;
 import org.bson.Document;
+import org.bson.types.ObjectId;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Repository;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 @Repository
 public class KnowledgeRepository {
@@ -14,6 +20,21 @@ public class KnowledgeRepository {
 
     public KnowledgeRepository(MongoTemplate mongoTemplate) {
         this.mongoTemplate = mongoTemplate;
+    }
+
+    // Текстовете на документите по _id, в реда на ids – директно от колекцията, без vector search.
+    // Липсващ документ или документ без text се пропуска.
+    public List<String> findTextsByIds(List<ObjectId> ids, String collectionName) {
+        Query query = new Query(Criteria.where("_id").in(ids));
+        Map<Object, String> textById = new HashMap<>();
+        for (Document doc : mongoTemplate.find(query, Document.class, collectionName)) {
+            textById.put(doc.get("_id"), doc.getString("text"));
+        }
+        return ids.stream()
+                .map(textById::get)
+                .filter(Objects::nonNull)
+                .filter(text -> !text.isBlank())
+                .toList();
     }
 
     public List<KnowledgeDocument> searchByVector(

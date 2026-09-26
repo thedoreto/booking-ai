@@ -3,9 +3,11 @@ package com.hotel.knowledge.service;
 import com.hotel.knowledge.model.KnowledgeDocument;
 import com.hotel.knowledge.repository.KnowledgeRepository;
 import dev.langchain4j.model.embedding.EmbeddingModel;
+import org.bson.types.ObjectId;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
@@ -18,6 +20,15 @@ public class KnowledgeService {
                             EmbeddingModel embeddingModel) {
         this.knowledgeRepo = knowledgeRepo;
         this.embeddingModel = embeddingModel;
+    }
+
+    // Бутон със знание: текстовете на избраните документи от knowledge_<hotelId>, в реда на ids
+    public List<String> textsByIds(String hotelId, List<ObjectId> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        List<ObjectId> validIds = ids.stream().filter(Objects::nonNull).toList();
+        return validIds.isEmpty() ? List.of() : knowledgeRepo.findTextsByIds(validIds, "knowledge_" + hotelId);
     }
 
     public List<KnowledgeDocument> findRelevant(

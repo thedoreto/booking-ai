@@ -1,6 +1,7 @@
 package com.hotel.langchain.controller;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.hotel.knowledge.service.KnowledgeService;
 import com.hotel.langchain.assistant.Assistant;
 import com.hotel.langchain.config.RetryingChatLanguageModel;
 import com.hotel.langchain.context.TenantContext;
@@ -14,11 +15,9 @@ import com.hotel.langchain.service.ChatHistoryService;
 import com.hotel.langchain.service.RoomBookingService;
 import com.hotel.langchain.service.RoomTypeService;
 import com.hotel.langchain.service.ShortcutService;
+import com.hotel.langchain.tools.ShortcutToolRunner;
 import dev.langchain4j.data.message.ChatMessage;
 import lombok.extern.slf4j.Slf4j;
-import org.bson.Document;
-import org.bson.types.ObjectId;
-import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -28,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @RestController
@@ -38,20 +38,23 @@ public class AiLangChainController {
 
     private final Assistant assistant;
     private final ShortcutService shortcutService;
-    private final MongoTemplate mongoTemplate;
+    private final KnowledgeService knowledgeService;
+    private final ShortcutToolRunner shortcutToolRunner;
     private final ChatLogService chatLogService;
     private final RoomBookingService roomBookingService;
     private final RoomTypeService roomTypeService;
 
     public AiLangChainController(Assistant assistant,
                                  ShortcutService shortcutService,
-                                 MongoTemplate mongoTemplate,
+                                 KnowledgeService knowledgeService,
+                                 ShortcutToolRunner shortcutToolRunner,
                                  ChatLogService chatLogService,
                                  RoomBookingService roomBookingService,
                                  RoomTypeService roomTypeService) {
         this.assistant = assistant;
         this.shortcutService = shortcutService;
-        this.mongoTemplate = mongoTemplate;
+        this.knowledgeService = knowledgeService;
+        this.shortcutToolRunner = shortcutToolRunner;
         this.chatLogService = chatLogService;
         this.roomBookingService = roomBookingService;
         this.roomTypeService = roomTypeService;
@@ -180,6 +183,10 @@ public class AiLangChainController {
             return withFlowId(response, flowId);
         }
         if (RoomBookingService.MY_BOOKINGS_ACTION.equals(response.actionType())) {
+            // От бутона, от чата или от /bookings/mine – колко резервации са показани
+            if (response.data() instanceof Map<?, ?> data && data.get("bookings") instanceof List<?> bookings) {
+                logEntry.detail("bookingsShown", bookings.size());
+            }
             // Всеки показан списък е ново действие – отказите от него са следващите стъпки
             String flowId = ChatFlow.idOrNew(null);
             chatLogService.logStep(hotelId, flowId, ChatFlow.CANCEL_BOOKING, startedBy, ChatFlow.BOOKINGS_SHOWN, logEntry);
@@ -234,7 +241,7 @@ public class AiLangChainController {
         ChatLogEntry logEntry = ChatLogEntry.start(ChatLogEntry.SHORTCUT, userId).detail("shortcutId", shortcutId);
         NewChatResponse response;
         try {
-            response = shortcutResponse(hotelId, userId, shortcutId, logEntry);
+            response = shortcutResponse(hotelId, shortcutId, logEntry);
         } catch (Exception e) {
             log.error("Shortcut failed for hotelId={}, shortcutId={}", hotelId, shortcutId, e);
             logEntry.error(ChatLogEntry.INTERNAL);
@@ -244,36 +251,43 @@ public class AiLangChainController {
         return logOrStartFlow(hotelId, bookingFlowId, ChatFlow.STARTED_BY_BUTTON, logEntry, response);
     }
 
-    private NewChatResponse shortcutResponse(String hotelId, String userId, String shortcutId, ChatLogEntry logEntry) {
+    private NewChatResponse shortcutResponse(String hotelId, String shortcutId, ChatLogEntry logEntry) {
         Shortcut shortcut = shortcutService.findActiveShortcut(hotelId, shortcutId);
         if (shortcut == null) {
             logEntry.outcome(ChatLogEntry.NO_RESULT, null);
             return new NewChatResponse(NOT_FOUND_REPLY, null);
         }
-        logEntry.detail("shortcutType", shortcut.getActionType()).detail("label", shortcut.getLabel());
-
-        // Бутон „Нова резервация“ – UI отваря календара сам; това е за клиенти, които все пак пращат shortcutId
-        if ("open_date_picker".equals(shortcut.getActionType())) {
-            return new NewChatResponse(OpenDatePickerException.DATE_PICKER_REPLY,
-                    OpenDatePickerException.OPEN_DATE_PICKER_ACTION, Map.of());
-        }
-        // Бутон „Моите резервации“ – картички с бутон „Откажи“
-        if ("my_bookings".equals(shortcut.getActionType())) {
-            TenantContext.UiAction result = roomBookingService.myBookings(hotelId, userId);
-            logEntry.outcome(result.outcome(), result.errorType());
-            return new NewChatResponse(result.reply(), result.actionType(), result.data());
-        }
-
-        List<ObjectId> knowledgeIds = shortcut.getTargetKnowledgeIds();
-        if (knowledgeIds == null || knowledgeIds.isEmpty() || knowledgeIds.get(0) == null) {
-            logEntry.outcome(ChatLogEntry.NO_RESULT, null);
+        Shortcut.Action action = shortcut.getAction();
+        if (action == null) {
+            logEntry.detail("label", shortcut.getLabel()).outcome(ChatLogEntry.NO_RESULT, null);
             return new NewChatResponse(NOT_FOUND_REPLY, null);
         }
+        logEntry.detail("label", shortcut.getLabel())
+                .detail("actionType", action.getType())
+                .detail("tool", action.getTool());
 
-        Document knowledgeDoc = mongoTemplate.findById(knowledgeIds.get(0), Document.class, "knowledge_" + hotelId);
+        // Бутон с tool – същият tool, който Gemini вика от чата, но без Gemini
+        if (action.isTool()) {
+            Optional<String> toolReply = shortcutToolRunner.run(action.getTool());
+            TenantContext.UiAction uiAction = TenantContext.getUiAction();
+            if (uiAction != null) {
+                // Tool-ът е поискал действие в UI (календар, списък с резервации...)
+                return toResponse(logEntry, uiAction);
+            }
+            if (toolReply.isEmpty() || toolReply.get().isBlank()) {
+                logEntry.outcome(ChatLogEntry.NO_RESULT, null);
+                return new NewChatResponse(NOT_FOUND_REPLY, null);
+            }
+            if (TenantContext.getToolError() != null) {
+                logEntry.error(TenantContext.getToolError());
+            }
+            return new NewChatResponse(toolReply.get(), null);
+        }
 
-        if (knowledgeDoc != null && knowledgeDoc.getString("text") != null) {
-            return new NewChatResponse(knowledgeDoc.getString("text"), null);
+        // Бутон със знание – текстовете на документите директно от knowledge_<hotelId>, без vector search
+        List<String> texts = knowledgeService.textsByIds(hotelId, action.getKnowledgeIds());
+        if (!texts.isEmpty()) {
+            return new NewChatResponse(String.join("\n\n", texts), null);
         }
 
         logEntry.outcome(ChatLogEntry.NO_RESULT, null);
@@ -350,9 +364,6 @@ public class AiLangChainController {
         NewChatResponse response;
         try {
             TenantContext.UiAction result = roomBookingService.myBookings(request.hotelId(), request.userId());
-            if (result.data() instanceof Map<?, ?> data && data.get("bookings") instanceof List<?> bookings) {
-                logEntry.detail("bookingsShown", bookings.size());
-            }
             response = toResponse(logEntry, result);
         } catch (Exception e) {
             log.error("My bookings failed for hotelId={}, userId={}", request.hotelId(), request.userId(), e);

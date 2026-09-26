@@ -17,7 +17,7 @@ public class ShortcutRepository {
         this.mongoTemplate = mongoTemplate;
     }
 
-    // Само активните бутони (is_active не е false; липсващо поле = активен)
+    // Само активните бутони (isActive не е false; липсващо поле = активен)
     public List<Shortcut> findAllByHotelId(String hotelId) {
         String collectionName = "shortcuts_" + hotelId;
         System.out.println("looking for collection name: " + collectionName);
@@ -30,6 +30,6 @@ public class ShortcutRepository {
     }
 
     private Criteria activeCriteria() {
-        return Criteria.where("is_active").ne(false);
+        return Criteria.where("isActive").ne(false);
     }
 }
