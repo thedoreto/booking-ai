@@ -241,7 +241,7 @@ public class AiLangChainController {
         ChatLogEntry logEntry = ChatLogEntry.start(ChatLogEntry.SHORTCUT, userId).detail("shortcutId", shortcutId);
         NewChatResponse response;
         try {
-            response = shortcutResponse(hotelId, shortcutId, logEntry);
+            response = shortcutResponse(hotelId, userId, shortcutId, logEntry);
         } catch (Exception e) {
             log.error("Shortcut failed for hotelId={}, shortcutId={}", hotelId, shortcutId, e);
             logEntry.error(ChatLogEntry.INTERNAL);
@@ -251,8 +251,12 @@ public class AiLangChainController {
         return logOrStartFlow(hotelId, bookingFlowId, ChatFlow.STARTED_BY_BUTTON, logEntry, response);
     }
 
-    private NewChatResponse shortcutResponse(String hotelId, String shortcutId, ChatLogEntry logEntry) {
+    private NewChatResponse shortcutResponse(String hotelId, String userId, String shortcutId, ChatLogEntry logEntry) {
         Shortcut shortcut = shortcutService.findActiveShortcut(hotelId, shortcutId);
+        // Бутон, скрит от госта (guest.isActive: false), не се изпълнява и при директна заявка
+        if (shortcut != null && !hasText(userId) && !shortcut.isVisibleToGuest()) {
+            shortcut = null;
+        }
         if (shortcut == null) {
             logEntry.outcome(ChatLogEntry.NO_RESULT, null);
             return new NewChatResponse(NOT_FOUND_REPLY, null);
@@ -427,8 +431,10 @@ public class AiLangChainController {
         return roomTypeService.getRoomTypes(hotelId);
     }
 
+    // userId – кой пита; без него (гост) не се връщат бутоните с guest.isActive: false
     @GetMapping("/shortcuts")
-    public List<Shortcut> getShortcuts(@RequestParam String hotelId) {
-        return shortcutService.getShortcutsForHotel(hotelId);
+    public List<Shortcut> getShortcuts(@RequestParam String hotelId,
+                                       @RequestParam(required = false) String userId) {
+        return shortcutService.getShortcutsForHotel(hotelId, userId);
     }
 }

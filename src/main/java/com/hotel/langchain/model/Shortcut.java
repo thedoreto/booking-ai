@@ -23,6 +23,18 @@ public class Shortcut {
     @Field("isActive")
     private Boolean isActive;
     private Action action;
+    // Видимост за гост (без вход); липсващо поле = гостът вижда бутона
+    private Guest guest;
+
+    // В Mongo: guest: { isActive } – isActive: false – гостът не вижда бутона.
+    // Какво става при гост, решава tool-ът (същото от бутона и от чата), не бутонът.
+    public static class Guest {
+        @Field("isActive")
+        private Boolean isActive;
+
+        public Boolean getIsActive() { return isActive; }
+        public void setIsActive(Boolean isActive) { this.isActive = isActive; }
+    }
 
     public static class Action {
         public static final String KNOWLEDGE = "knowledge";
@@ -58,4 +70,13 @@ public class Shortcut {
     // Към какво сочи бутонът; null – записът няма action
     public Action getAction() { return action; }
     public void setAction(Action action) { this.action = action; }
+
+    public Guest getGuest() { return guest; }
+    public void setGuest(Guest guest) { this.guest = guest; }
+
+    // Гостът вижда бутона, освен ако guest.isActive е false
+    @JsonIgnore
+    public boolean isVisibleToGuest() {
+        return guest == null || guest.getIsActive() == null || guest.getIsActive();
+    }
 }

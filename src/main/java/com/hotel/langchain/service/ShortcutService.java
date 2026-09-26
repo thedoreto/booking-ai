@@ -15,12 +15,15 @@ public class ShortcutService {
         this.shortcutRepository = shortcutRepository;
     }
 
-    public List<Shortcut> getShortcutsForHotel(String hotelId) {
-        System.out.println("get shortcuts for hotel:" + hotelId);
+    // Без userId (гост) – само бутоните, които гостът вижда (guest.isActive)
+    public List<Shortcut> getShortcutsForHotel(String hotelId, String userId) {
+        boolean guest = userId == null || userId.isBlank();
+        System.out.println("get shortcuts for hotel:" + hotelId + ", guest: " + guest);
         if (hotelId == null || hotelId.isBlank()) {
             return List.of();
         }
-        return shortcutRepository.findAllByHotelId(hotelId);
+        List<Shortcut> shortcuts = shortcutRepository.findAllByHotelId(hotelId);
+        return guest ? shortcuts.stream().filter(Shortcut::isVisibleToGuest).toList() : shortcuts;
     }
 
     // null, ако бутонът липсва или е неактивен
