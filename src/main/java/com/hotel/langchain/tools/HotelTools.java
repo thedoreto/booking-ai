@@ -18,6 +18,7 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 
 @Component
 public class HotelTools {
@@ -76,6 +77,18 @@ public class HotelTools {
         } catch (Exception e) {
             return toolError("Грешка при зареждане на стаите: ", e);
         }
+    }
+
+    @Tool("Връща типовете стаи в хотела (само имената им). Използвай този инструмент, когато клиентът пита " +
+            "какви типове стаи има хотелът. Работи и без вход.")
+    public String getRoomTypes() {
+        // Типовете идват от booking-system през Kafka (event get_room_types), кеширани в RoomTypeService
+        List<RoomTypeService.RoomType> types = roomTypeService.getRoomTypes(TenantContext.getHotelId());
+        if (types.isEmpty()) {
+            return "В момента няма информация за типовете стаи. Моля, опитайте отново след малко.";
+        }
+        return "Типове стаи в хотела: "
+                + types.stream().map(RoomTypeService.RoomType::name).collect(Collectors.joining(", ")) + ".";
     }
 
     @Tool("Показва на потребителя календар за избор на период и след това свободните стаи. " +
