@@ -1,5 +1,6 @@
 package com.hotel.langchain.service;
 
+import com.hotel.langchain.context.ChatUser;
 import com.hotel.langchain.context.TenantContext.UiAction;
 import com.hotel.langchain.log.ChatLogEntry;
 import com.hotel.langchain.service.HotelBackendClient.HotelBackendException;
@@ -88,9 +89,10 @@ public class RoomBookingService {
         }
     }
 
-    public UiAction createBookings(String hotelId, String userId, String startDateStr, String endDateStr,
+    // user – влезлият потребител; токенът му отива през Kafka и booking-system взима потребителя от него
+    public UiAction createBookings(String hotelId, ChatUser user, String startDateStr, String endDateStr,
                                    List<String> roomIds) {
-        if (userId == null || userId.isBlank()) {
+        if (user == null) {
             return rejected("Моля, влезте в профила си, за да направите резервация.");
         }
         if (roomIds == null || roomIds.isEmpty()) {
@@ -111,13 +113,13 @@ public class RoomBookingService {
 
         try {
             Object bookings = backendClient.request(hotelId, "create_booking", Map.of(
-                    "userId", userId,
+                    "token", user.token(),
                     "roomIds", roomIds,
                     "startDate", startDate.toString(),
                     "endDate", endDate.toString()
             ));
             String reply = confirmationText(bookings, startDate, endDate);
-            chatHistoryService.record(hotelId, userId, "Резервирай " + roomNumbersText(bookings) + " от "
+            chatHistoryService.record(hotelId, user, "Резервирай " + roomNumbersText(bookings) + " от "
                     + startDate.format(BG_DATE) + " до " + endDate.format(BG_DATE) + ".", reply);
             return new UiAction(BOOKING_CONFIRMED_ACTION, reply, bookings);
         } catch (HotelBackendException e) {
@@ -130,12 +132,12 @@ public class RoomBookingService {
     }
 
     // Предстоящите потвърдени резервации на потребителя – за картичките с бутон „Откажи“
-    public UiAction myBookings(String hotelId, String userId) {
-        if (userId == null || userId.isBlank()) {
+    public UiAction myBookings(String hotelId, ChatUser user) {
+        if (user == null) {
             return rejected("Моля, влезте в профила си, за да видите вашите резервации.");
         }
         try {
-            Object bookings = backendClient.request(hotelId, "get_upcoming_bookings", Map.of("userId", userId));
+            Object bookings = backendClient.request(hotelId, "get_upcoming_bookings", Map.of("token", user.token()));
             if (!(bookings instanceof List<?> list) || list.isEmpty()) {
                 return noResult("Нямате предстоящи резервации.");
             }
@@ -149,8 +151,8 @@ public class RoomBookingService {
         }
     }
 
-    public UiAction cancelBooking(String hotelId, String userId, String bookingId) {
-        if (userId == null || userId.isBlank()) {
+    public UiAction cancelBooking(String hotelId, ChatUser user, String bookingId) {
+        if (user == null) {
             return rejected("Моля, влезте в профила си, за да откажете резервация.");
         }
         if (bookingId == null || bookingId.isBlank()) {
@@ -158,12 +160,12 @@ public class RoomBookingService {
         }
         try {
             Object booking = backendClient.request(hotelId, "cancel_booking", Map.of(
-                    "userId", userId,
+                    "token", user.token(),
                     "bookingId", bookingId
             ));
             String description = describeBooking(hotelId, booking);
             String reply = "Резервацията " + description + " е отказана.";
-            chatHistoryService.record(hotelId, userId, "Откажи резервацията " + description + ".", reply);
+            chatHistoryService.record(hotelId, user, "Откажи резервацията " + description + ".", reply);
             return new UiAction(BOOKING_CANCELED_ACTION, reply, booking);
         } catch (HotelBackendException e) {
             return backendError("Резервацията не беше отказана: " + translateBackendError(e.getMessage()));
@@ -247,6 +249,8 @@ public class RoomBookingService {
             case "Invalid dates" -> "невалиден период.";
             case "Invalid room type" -> "невалиден тип стая.";
             case "Booking not found" -> "резервацията не е намерена.";
+            case "Login required", "Invalid token" -> "моля, влезте в профила си.";
+            case "Session expired" -> "сесията ви е изтекла. Моля, влезте отново в профила си.";
             case "Booking is already canceled" -> "резервацията вече е отказана.";
             case "Cancellation deadline passed" -> "резервация може да се откаже най-късно в деня преди настаняването.";
             default -> reason;

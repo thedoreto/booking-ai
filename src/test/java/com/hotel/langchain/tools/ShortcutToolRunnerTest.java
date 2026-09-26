@@ -1,5 +1,6 @@
 package com.hotel.langchain.tools;
 
+import com.hotel.langchain.context.ChatUser;
 import com.hotel.langchain.context.TenantContext;
 import com.hotel.langchain.exception.OpenDatePickerException;
 import com.hotel.langchain.service.HotelBackendClient;
@@ -17,6 +18,8 @@ import static org.mockito.Mockito.when;
 
 class ShortcutToolRunnerTest {
 
+    private static final ChatUser USER = new ChatUser("user-1", "token-1");
+
     private final RoomBookingService roomBookingService = mock(RoomBookingService.class);
     private final ShortcutToolRunner runner = new ShortcutToolRunner(new HotelTools(
             mock(HotelBackendClient.class), mock(RoomTypeService.class), roomBookingService));
@@ -24,7 +27,7 @@ class ShortcutToolRunnerTest {
     @BeforeEach
     void setTenant() {
         TenantContext.setHotelId("seven_stars");
-        TenantContext.setUserId("user-1");
+        TenantContext.setUser(USER);
     }
 
     @AfterEach
@@ -44,7 +47,7 @@ class ShortcutToolRunnerTest {
     @Test
     void toolRunsWithTheCurrentUser() {
         TenantContext.UiAction bookings = new TenantContext.UiAction("MY_BOOKINGS", "Вашите резервации", Map.of());
-        when(roomBookingService.myBookings("seven_stars", "user-1")).thenReturn(bookings);
+        when(roomBookingService.myBookings("seven_stars", USER)).thenReturn(bookings);
 
         assertThat(runner.run("showMyBookings")).contains("Вашите резервации");
         assertThat(TenantContext.getUiAction()).isEqualTo(bookings);

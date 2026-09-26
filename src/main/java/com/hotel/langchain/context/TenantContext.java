@@ -4,7 +4,8 @@ import com.hotel.langchain.log.ChatLogEntry;
 
 public class TenantContext {
     private static final ThreadLocal<String> CURRENT_HOTEL_ID = new ThreadLocal<>();
-    private static final ThreadLocal<String> CURRENT_USER_ID = new ThreadLocal<>();
+    // Влезлият потребител (токен от UI); null – гост
+    private static final ThreadLocal<ChatUser> CURRENT_USER = new ThreadLocal<>();
     // Действие за UI, поискано от tool по време на заявката (календар, избор на стаи...)
     private static final ThreadLocal<UiAction> UI_ACTION = new ThreadLocal<>();
     // Грешка в tool, който връща само текст на модела (без UiAction) – за логовете (ChatLogEntry.errorType)
@@ -25,12 +26,12 @@ public class TenantContext {
         return CURRENT_HOTEL_ID.get() != null ? CURRENT_HOTEL_ID.get() : "knowledge_seven_stars"; // Дефолтна стойност
     }
 
-    public static void setUserId(String userId) {
-        CURRENT_USER_ID.set(userId);
+    public static void setUser(ChatUser user) {
+        CURRENT_USER.set(user);
     }
 
-    public static String getUserId() {
-        return CURRENT_USER_ID.get() != null ? CURRENT_USER_ID.get() : null;
+    public static ChatUser getUser() {
+        return CURRENT_USER.get();
     }
 
     public static void requestUiAction(UiAction action) {
@@ -53,6 +54,6 @@ public class TenantContext {
         UI_ACTION.remove();
         TOOL_ERROR.remove();
         CURRENT_HOTEL_ID.remove();
-        CURRENT_USER_ID.remove();
+        CURRENT_USER.remove();
     }
 }

@@ -1,6 +1,7 @@
 package com.hotel.langchain.tools;
 
 
+import com.hotel.langchain.context.ChatUser;
 import com.hotel.langchain.context.TenantContext;
 import com.hotel.langchain.exception.OpenDatePickerException;
 import com.hotel.langchain.log.ChatLogEntry;
@@ -39,7 +40,7 @@ public class HotelTools {
             "или иска да види списък с резервациите си. Ти НЕ отказваш резервации – потребителят го прави с бутона.")
     public String showMyBookings() {
         // Отговорът отива директно в UI (без второ извикване към Gemini) – виж UiActionShortCircuitChatModel
-        TenantContext.UiAction action = roomBookingService.myBookings(TenantContext.getHotelId(), TenantContext.getUserId());
+        TenantContext.UiAction action = roomBookingService.myBookings(TenantContext.getHotelId(), TenantContext.getUser());
         TenantContext.requestUiAction(action);
         return action.reply();
     }
@@ -48,14 +49,14 @@ public class HotelTools {
             "за резервациите си (напр. кога е настаняването или колко струва). За списък с резервации или отказ използвай showMyBookings.")
     public String getReservations() {
         String hotelId = TenantContext.getHotelId();
-        String userId = TenantContext.getUserId();
+        ChatUser user = TenantContext.getUser();
 
-        if (userId == null || userId.isEmpty()) {
+        if (user == null) {
             return "Моля, влезте в профила си, за да проверите вашите резервации.";
         }
 
         try {
-            Object reservations = backendClient.request(hotelId, "get_reservations", Map.of("userId", userId));
+            Object reservations = backendClient.request(hotelId, "get_reservations", Map.of("token", user.token()));
             return backendClient.toJson(reservations);
         } catch (Exception e) {
             return toolError("Грешка при зареждане на резервациите: ", e);

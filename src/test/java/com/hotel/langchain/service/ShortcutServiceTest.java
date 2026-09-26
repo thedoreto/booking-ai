@@ -22,9 +22,8 @@ class ShortcutServiceTest {
         Shortcut hidden = button(false);
         when(repository.findAllByHotelId("seven_stars")).thenReturn(List.of(noGuestField, visible, hidden));
 
-        assertThat(service.getShortcutsForHotel("seven_stars", null)).containsExactly(noGuestField, visible);
-        assertThat(service.getShortcutsForHotel("seven_stars", " ")).containsExactly(noGuestField, visible);
-        assertThat(service.getShortcutsForHotel("seven_stars", "user-1")).containsExactly(noGuestField, visible, hidden);
+        assertThat(service.getShortcutsForHotel("seven_stars", true)).containsExactly(noGuestField, visible);
+        assertThat(service.getShortcutsForHotel("seven_stars", false)).containsExactly(noGuestField, visible, hidden);
     }
 
     private static Shortcut button(Boolean guestIsActive) {

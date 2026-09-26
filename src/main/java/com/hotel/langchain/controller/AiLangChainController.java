@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.hotel.knowledge.service.KnowledgeService;
 import com.hotel.langchain.assistant.Assistant;
 import com.hotel.langchain.config.RetryingChatLanguageModel;
+import com.hotel.langchain.context.ChatUser;
 import com.hotel.langchain.context.TenantContext;
 import com.hotel.langchain.exception.OpenDatePickerException;
 import com.hotel.langchain.log.ChatFlow;
@@ -18,6 +19,7 @@ import com.hotel.langchain.service.ShortcutService;
 import com.hotel.langchain.tools.ShortcutToolRunner;
 import dev.langchain4j.data.message.ChatMessage;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -62,9 +64,9 @@ public class AiLangChainController {
 
     public record Message(String role, String content) {}
 
+    // Потребителят не идва от body-то, а от JWT-то в header Authorization (виж ChatUser)
     public record ChatRequest(
             String hotelId,
-            String userId,
             List<Message> messages,
             @JsonProperty("shortcutId") String shortcutId,
             String flowId // текущата нова резервация в UI (виж ChatFlow), ако има
@@ -78,23 +80,24 @@ public class AiLangChainController {
     }
 
     // flowId – действието (ChatFlow), към което е стъпката; без него започва ново
-    public record AvailableRoomsRequest(String hotelId, String userId, String startDate, String endDate,
+    public record AvailableRoomsRequest(String hotelId, String startDate, String endDate,
                                         String roomType, String flowId) {}
 
-    public record CreateBookingRequest(String hotelId, String userId, String startDate, String endDate,
+    public record CreateBookingRequest(String hotelId, String startDate, String endDate,
                                        List<String> roomIds, String flowId) {}
 
-    public record MyBookingsRequest(String hotelId, String userId) {}
+    public record MyBookingsRequest(String hotelId) {}
 
-    public record CancelBookingRequest(String hotelId, String userId, String bookingId, String flowId) {}
+    public record CancelBookingRequest(String hotelId, String bookingId, String flowId) {}
 
     @PostMapping("/chat")
-    public NewChatResponse chat(@RequestBody ChatRequest request) {
+    public NewChatResponse chat(@RequestBody ChatRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+        ChatUser user = ChatUser.fromAuthorization(authorization);
         if (request == null) {
             return new NewChatResponse("Липсва заявка.", null);
         }
         // Без текста на съобщенията – той е в logs_<hotelId>, съкратен
-        System.out.println("Received chat request: hotelId=" + request.hotelId() + ", userId=" + request.userId()
+        System.out.println("Received chat request: hotelId=" + request.hotelId() + ", userId=" + userIdOf(user)
                 + ", shortcutId=" + request.shortcutId()
                 + ", messages=" + (request.messages() != null ? request.messages().size() : 0));
         if (!hasText(request.hotelId())) {
@@ -102,26 +105,26 @@ public class AiLangChainController {
         }
 
         try {
-            setTenant(request.hotelId(), request.userId());
+            setTenant(request.hotelId(), user);
             if (hasText(request.shortcutId())) {
-                return handleShortcut(request.hotelId(), request.userId(), request.shortcutId(), request.flowId());
+                return handleShortcut(request.hotelId(), user, request.shortcutId(), request.flowId());
             }
 
             if (request.messages() == null || request.messages().isEmpty()) {
                 return new NewChatResponse("Липсват съобщения.", null);
             }
 
-            return handleChat(request);
+            return handleChat(request, user);
         } finally {
             TenantContext.clear();
         }
     }
 
-    private NewChatResponse handleChat(ChatRequest request) {
+    private NewChatResponse handleChat(ChatRequest request, ChatUser user) {
         String hotelId = request.hotelId();
         Message lastMessage = request.messages().get(request.messages().size() - 1);
         String userText = lastMessage.content();
-        ChatLogEntry logEntry = ChatLogEntry.start(ChatLogEntry.CHAT, request.userId()).userMessage(userText);
+        ChatLogEntry logEntry = ChatLogEntry.start(ChatLogEntry.CHAT, userIdOf(user)).userMessage(userText);
         GeminiUsageTracker.start();
         NewChatResponse response;
 
@@ -133,7 +136,7 @@ public class AiLangChainController {
             System.out.println("hotelId: " + hotelId + ", formattedDate: " + formattedDate + ", dayOfWeek: " + dayOfWeek);
 
             // Отделна история за всеки хотел и потребител
-            String memoryId = ChatHistoryService.memoryId(hotelId, request.userId());
+            String memoryId = ChatHistoryService.memoryId(hotelId, user);
             String roomTypes = roomTypeService.describeForPrompt(hotelId);
             String aiReply = assistant.chat(memoryId, hotelId, formattedDate, dayOfWeek, roomTypes, userText);
 
@@ -160,7 +163,7 @@ public class AiLangChainController {
                 logEntry.error(ChatLogEntry.GEMINI_OVERLOADED_503);
                 response = new NewChatResponse("В момента асистентът е претоварен. Моля, опитайте отново след минута.", null);
             } else {
-                log.error("Chat failed for hotelId={}, userId={}", hotelId, request.userId(), e);
+                log.error("Chat failed for hotelId={}, userId={}", hotelId, userIdOf(user), e);
                 logEntry.error(ChatLogEntry.INTERNAL);
                 response = new NewChatResponse("Възникна техническа грешка при връзката с асистента. Моля, опитайте по-късно.", null);
             }
@@ -210,13 +213,11 @@ public class AiLangChainController {
         return new NewChatResponse(response.reply(), response.actionType(), data);
     }
 
-    private void setTenant(String hotelId, String userId) {
+    private void setTenant(String hotelId, ChatUser user) {
         if (hotelId != null && !hotelId.isBlank()) {
             TenantContext.setHotelId(hotelId);
         }
-        if (userId != null && !userId.isBlank()) {
-            TenantContext.setUserId(userId);
-        }
+        TenantContext.setUser(user);
     }
 
     // Проверяваме цялата верига от причини, защото LangChain4j обвива HTTP грешката от Gemini.
@@ -232,16 +233,21 @@ public class AiLangChainController {
         return false;
     }
 
+    // id от токена – само за логовете (не е проверен тук, проверява го booking-system)
+    private static String userIdOf(ChatUser user) {
+        return user != null ? user.id() : null;
+    }
+
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
     }
 
-    private NewChatResponse handleShortcut(String hotelId, String userId, String shortcutId, String bookingFlowId) {
+    private NewChatResponse handleShortcut(String hotelId, ChatUser user, String shortcutId, String bookingFlowId) {
         System.out.println("hotelId: " + hotelId + ", shortcutId: " + shortcutId);
-        ChatLogEntry logEntry = ChatLogEntry.start(ChatLogEntry.SHORTCUT, userId).detail("shortcutId", shortcutId);
+        ChatLogEntry logEntry = ChatLogEntry.start(ChatLogEntry.SHORTCUT, userIdOf(user)).detail("shortcutId", shortcutId);
         NewChatResponse response;
         try {
-            response = shortcutResponse(hotelId, userId, shortcutId, logEntry);
+            response = shortcutResponse(hotelId, user, shortcutId, logEntry);
         } catch (Exception e) {
             log.error("Shortcut failed for hotelId={}, shortcutId={}", hotelId, shortcutId, e);
             logEntry.error(ChatLogEntry.INTERNAL);
@@ -251,10 +257,10 @@ public class AiLangChainController {
         return logOrStartFlow(hotelId, bookingFlowId, ChatFlow.STARTED_BY_BUTTON, logEntry, response);
     }
 
-    private NewChatResponse shortcutResponse(String hotelId, String userId, String shortcutId, ChatLogEntry logEntry) {
+    private NewChatResponse shortcutResponse(String hotelId, ChatUser user, String shortcutId, ChatLogEntry logEntry) {
         Shortcut shortcut = shortcutService.findActiveShortcut(hotelId, shortcutId);
         // Бутон, скрит от госта (guest.isActive: false), не се изпълнява и при директна заявка
-        if (shortcut != null && !hasText(userId) && !shortcut.isVisibleToGuest()) {
+        if (shortcut != null && user == null && !shortcut.isVisibleToGuest()) {
             shortcut = null;
         }
         if (shortcut == null) {
@@ -301,12 +307,12 @@ public class AiLangChainController {
     // Избрани дати от календара -> свободни стаи директно от booking-system, без LLM.
     // Стъпка в новата резервация (ChatFlow); без flowId – календарът е отворен от бутона.
     @PostMapping("/rooms/available")
-    public NewChatResponse availableRooms(@RequestBody AvailableRoomsRequest request) {
+    public NewChatResponse availableRooms(@RequestBody AvailableRoomsRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
         if (request == null || !hasText(request.hotelId())) {
             return new NewChatResponse("Липсва хотел.", null);
         }
         String flowId = ChatFlow.idOrNew(request.flowId());
-        ChatLogEntry step = ChatLogEntry.start(ChatLogEntry.SEARCH, request.userId())
+        ChatLogEntry step = ChatLogEntry.start(ChatLogEntry.SEARCH, userIdOf(ChatUser.fromAuthorization(authorization)))
                 .detail("startDate", request.startDate())
                 .detail("endDate", request.endDate())
                 .detail("roomType", hasText(request.roomType()) ? request.roomType() : null);
@@ -329,18 +335,19 @@ public class AiLangChainController {
 
     // Избрани стаи от списъка -> резервация директно в booking-system, без LLM. Стъпка в новата резервация.
     @PostMapping("/bookings")
-    public NewChatResponse createBooking(@RequestBody CreateBookingRequest request) {
+    public NewChatResponse createBooking(@RequestBody CreateBookingRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+        ChatUser user = ChatUser.fromAuthorization(authorization);
         if (request == null || !hasText(request.hotelId())) {
             return new NewChatResponse("Липсва хотел.", null);
         }
         String flowId = ChatFlow.idOrNew(request.flowId());
-        ChatLogEntry step = ChatLogEntry.start(ChatLogEntry.BOOKING, request.userId())
+        ChatLogEntry step = ChatLogEntry.start(ChatLogEntry.BOOKING, userIdOf(user))
                 .detail("startDate", request.startDate())
                 .detail("endDate", request.endDate())
                 .detail("roomIds", request.roomIds());
         NewChatResponse response;
         try {
-            TenantContext.UiAction result = roomBookingService.createBookings(request.hotelId(), request.userId(),
+            TenantContext.UiAction result = roomBookingService.createBookings(request.hotelId(), user,
                     request.startDate(), request.endDate(), request.roomIds());
             if (result.data() instanceof List<?> bookings) {
                 step.detail("bookingIds", bookings.stream().map(b -> field(b, "id")).toList())
@@ -349,7 +356,7 @@ public class AiLangChainController {
             }
             response = toResponse(step, result);
         } catch (Exception e) {
-            log.error("Booking failed for hotelId={}, userId={}", request.hotelId(), request.userId(), e);
+            log.error("Booking failed for hotelId={}, userId={}", request.hotelId(), userIdOf(user), e);
             response = failure(step, "Възникна техническа грешка при резервацията. Моля, опитайте по-късно.");
         }
         chatLogService.logStep(request.hotelId(), flowId, ChatFlow.NEW_BOOKING, ChatFlow.STARTED_BY_BUTTON,
@@ -360,17 +367,18 @@ public class AiLangChainController {
     // Предстоящите резервации на потребителя като картички (MY_BOOKINGS), без LLM.
     // Показан списък започва действие за отказ; празен списък или грешка е отделен запис.
     @PostMapping("/bookings/mine")
-    public NewChatResponse myBookings(@RequestBody MyBookingsRequest request) {
+    public NewChatResponse myBookings(@RequestBody MyBookingsRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+        ChatUser user = ChatUser.fromAuthorization(authorization);
         if (request == null || !hasText(request.hotelId())) {
             return new NewChatResponse("Липсва хотел.", null);
         }
-        ChatLogEntry logEntry = ChatLogEntry.start(ChatLogEntry.MY_BOOKINGS, request.userId());
+        ChatLogEntry logEntry = ChatLogEntry.start(ChatLogEntry.MY_BOOKINGS, userIdOf(user));
         NewChatResponse response;
         try {
-            TenantContext.UiAction result = roomBookingService.myBookings(request.hotelId(), request.userId());
+            TenantContext.UiAction result = roomBookingService.myBookings(request.hotelId(), user);
             response = toResponse(logEntry, result);
         } catch (Exception e) {
-            log.error("My bookings failed for hotelId={}, userId={}", request.hotelId(), request.userId(), e);
+            log.error("My bookings failed for hotelId={}, userId={}", request.hotelId(), userIdOf(user), e);
             response = failure(logEntry, "Възникна техническа грешка при зареждане на резервациите. Моля, опитайте по-късно.");
         }
         return logOrStartFlow(request.hotelId(), null, ChatFlow.STARTED_BY_BUTTON, logEntry, response);
@@ -379,17 +387,18 @@ public class AiLangChainController {
     // Бутон „Откажи“ на картичка -> отказ директно в booking-system, без LLM; записва се в паметта на чата.
     // Стъпка в действието за отказ, започнало с показания списък.
     @PostMapping("/bookings/cancel")
-    public NewChatResponse cancelBooking(@RequestBody CancelBookingRequest request) {
+    public NewChatResponse cancelBooking(@RequestBody CancelBookingRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+        ChatUser user = ChatUser.fromAuthorization(authorization);
         if (request == null || !hasText(request.hotelId())) {
             return new NewChatResponse("Липсва хотел.", null);
         }
         String flowId = ChatFlow.idOrNew(request.flowId());
-        ChatLogEntry step = ChatLogEntry.start(ChatLogEntry.CANCEL, request.userId())
+        ChatLogEntry step = ChatLogEntry.start(ChatLogEntry.CANCEL, userIdOf(user))
                 .detail("bookingId", request.bookingId());
         NewChatResponse response;
         try {
             TenantContext.UiAction result = roomBookingService.cancelBooking(
-                    request.hotelId(), request.userId(), request.bookingId());
+                    request.hotelId(), user, request.bookingId());
             if (result.data() != null) {
                 step.detail("roomNumber", field(result.data(), "roomNumber"))
                         .detail("checkInDate", field(result.data(), "checkInDate"))
@@ -398,7 +407,7 @@ public class AiLangChainController {
             }
             response = toResponse(step, result);
         } catch (Exception e) {
-            log.error("Cancel booking failed for hotelId={}, userId={}", request.hotelId(), request.userId(), e);
+            log.error("Cancel booking failed for hotelId={}, userId={}", request.hotelId(), userIdOf(user), e);
             response = failure(step, "Възникна техническа грешка при отказа. Моля, опитайте по-късно.");
         }
         chatLogService.logStep(request.hotelId(), flowId, ChatFlow.CANCEL_BOOKING, ChatFlow.STARTED_BY_BUTTON,
@@ -431,10 +440,9 @@ public class AiLangChainController {
         return roomTypeService.getRoomTypes(hotelId);
     }
 
-    // userId – кой пита; без него (гост) не се връщат бутоните с guest.isActive: false
+    // Без токен (гост) не се връщат бутоните с guest.isActive: false
     @GetMapping("/shortcuts")
-    public List<Shortcut> getShortcuts(@RequestParam String hotelId,
-                                       @RequestParam(required = false) String userId) {
-        return shortcutService.getShortcutsForHotel(hotelId, userId);
+    public List<Shortcut> getShortcuts(@RequestParam String hotelId, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+        return shortcutService.getShortcutsForHotel(hotelId, ChatUser.fromAuthorization(authorization) == null);
     }
 }

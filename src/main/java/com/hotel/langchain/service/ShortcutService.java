@@ -15,9 +15,8 @@ public class ShortcutService {
         this.shortcutRepository = shortcutRepository;
     }
 
-    // Без userId (гост) – само бутоните, които гостът вижда (guest.isActive)
-    public List<Shortcut> getShortcutsForHotel(String hotelId, String userId) {
-        boolean guest = userId == null || userId.isBlank();
+    // guest – без вход: само бутоните, които гостът вижда (guest.isActive)
+    public List<Shortcut> getShortcutsForHotel(String hotelId, boolean guest) {
         System.out.println("get shortcuts for hotel:" + hotelId + ", guest: " + guest);
         if (hotelId == null || hotelId.isBlank()) {
             return List.of();
