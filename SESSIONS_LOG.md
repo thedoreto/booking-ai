@@ -2,6 +2,83 @@
 
 Планът и идеите за следващи сесии са в `PLAN.md`.
 
+## Сесия 2026-09-26 – анонимен гост, архитектурни правила, бутони, JWT, снимки през Kafka
+
+### Commit-и
+| Repo | Commit | Какво |
+|---|---|---|
+| booking-system | `078a378` | Публично четене без вход: `GET /hotelinfo`, `GET /rooms/**`, `GET /images/**` |
+| booking-ui | `9a0c372` | Гостът вижда Hotel Info, Rooms и чата |
+| booking-ai | `732ce6e` | Бутонът е препратка към знание или tool (`action`); `ShortcutToolRunner` пуска tool по име без Gemini |
+| booking-ai | `04b996c` | Нов tool `getRoomTypes` – работи и за гост |
+| booking-ai | `89d20f2` | `guest.isActive: false` скрива бутона от госта (в списъка и при директна заявка) |
+| booking-ui | `49451fb` | Кои бутони вижда гостът, решава booking-ai |
+| booking-ui | `28ba492` | Махнат кодът, с който чатът знаеше какво прави всеки бутон |
+| booking-system | `fc0ced6` | Потребителят в Kafka заявките се взима от JWT-то, не от `userId` |
+| booking-ai | `89b99bd` | Токенът от header `Authorization` отива през Kafka; паметта е по токена |
+| booking-ui | `51a7044` | Чатът праща JWT на AI асистента вместо `userId` |
+| booking-system | `1b8d8e6` | Свободните стаи в Kafka отговора идват със снимките си |
+| booking-ui | `0d3d62e` | Чатът показва снимките от отговора на AI асистента, без `GET /images` |
+| booking-ai | `7dceeee` | Отделна памет за всеки гост (`sessionId`), най-много 5000 разговора в RAM |
+| booking-ui | `5d41147` | Чатът праща `sessionId` (нов при всяко отваряне), резервен UUID по `http://` |
+
+### Архитектурни правила
+Записани в `CLAUDE.md` на трите проекта (раздел „Архитектурни правила (задължителни)“):
+1. Възможно най-малко заявки към LLM – най-важното правило.
+2. UI чатът не знае нищо – само праща данните на AI асистента и показва каквото той върне.
+3. AI асистентът праща заявки към бекенда само през Kafka.
+4. AI асистентът получава данни от бекенда само през Kafka (собствената му база `HotelAI` не е бекендът).
+5. Правило 2 важи само за чата – страниците на сайта си говорят директно с booking-system.
+6. Действията в чата остават на отделни адреси в booking-ai (не се сливат в `/api/chat`).
+
+Проверка след промените: booking-ai няма HTTP клиенти – всичко към booking-system е през Kafka (`get_room_types`, `get_available_rooms_by_dates`, `create_booking`, `get_upcoming_bookings`, `cancel_booking`, `get_reservations`, `get_all_rooms`). Чатът в UI вика само booking-ai.
+
+### Анонимен гост
+- **Сайтът:** гостът вижда Hotel Info и Rooms (`NavBar`, публични маршрути `/hotelinfo`, `/rooms`, `/rooms/:id`; стаята е само за четене, ако не си админ). `*` води към `/hotelinfo`. booking-system чете тези данни без вход; записът иска вход.
+- **Чатът:** показва се на всички; `ChatWindow key={user?.id || "guest"}` – при вход/изход започва нов разговор. Поздрав без име за гост.
+- **Бутоните:** кой бутон вижда гостът, е настройка в базата – `guest: { isActive: false }` на бутона в `shortcuts_<hotelId>` го скрива от госта (`GET /api/shortcuts` без токен). Скрит бутон не се изпълнява и при директна заявка със `shortcutId` („Информацията не е намерена.“).
+- **Поведение при гост (уточнено накрая на деня):** гостът отваря календара и вижда свободните стаи; при „Резервирай“, отказ и „Моите резервации“ получава „влезте в профила си“ – така работи и сега. Поведението при гост решава **tool-ът / `RoomBookingService`** (еднакво от бутона и от чата), не бутонът – затова `guest.action` беше добавено и махнато.
+- **Преглед на сигурността при гост:** няма достъп до чужди данни или резервация без вход. Слабите места (произволен `hotelId` → колекции в Mongo, без лимит на заявки и дължина на съобщението, `guest.isActive` не е защита, подправяне на логовете, чужд хотел) са записани в `PLAN.md`.
+- **Отделна памет за всеки гост** (преди всички гости на хотел деляха `hotelId:anonymous` – чужди въпроси и лични данни можеше да стигнат до друг гост през Gemini): UI праща `sessionId` (UUID, нов при всяко отваряне на чата, вход/изход и презареждане) с `/api/chat`; паметта е `hotelId:guest:<sessionId>`. Гост без валиден `sessionId` получава памет само за заявката. Влезлият потребител е с `hotelId:user:<memoryKey>`. `BoundedChatMemoryStore` пази най-много 5000 разговора (LRU) вместо `InMemoryChatMemoryStore`, който не триеше нищо. `crypto.randomUUID` го има само по https/localhost – по `http://` UUID v4 се сглобява от `crypto.getRandomValues` (`newSessionId`).
+
+### Бутоните – една форма
+В базата имаше две форми (`actionType: knowledge_reference` + `targetKnowledgeIds` и `actionType: open_date_picker` / `my_bookings`, чието значение беше твърдо в кода и в UI), а полето за активност беше ту `isActive`, ту `is_active` (кодът четеше само `is_active`). Потребителката обнови записите; старата форма е махната от кода.
+```js
+{ shortcutId, label, category, isActive, guest: { isActive }, action: { type: 'knowledge', knowledgeIds: [ObjectId(...)] } }
+{ shortcutId, label, category, isActive, guest: { isActive }, action: { type: 'tool', tool: 'getAvailableRoomsByDates' } }
+```
+- **Бутон с tool** – `ShortcutToolRunner` намира `@Tool` метода в `HotelTools` по име и го вика с `null` параметри, без Gemini. Бутонът и чатът викат един и същ tool – затова всичко, което променя поведението, трябва да е в tool-а, а не в бутона, контролера или UI.
+- **Бутон със знание** – всички документи по `_id` от `knowledge_<hotelId>`, в реда на ids (преди – само първият).
+- Имена на tool-овете: `getAvailableRoomsByDates`, `showMyBookings`, `getReservations`, `getAllRooms`, `getRoomTypes`, `getStrawberryMuffinRecipe`.
+- **UI:** всеки бутон само праща `shortcutId` към `/api/chat`. Махнати са проверките за `open_date_picker` / `my_bookings`, подменюто с типове стаи (типът се избира в календара) и `/api/bookings/mine` от UI.
+- `bookingsShown` в логовете се записва за всеки показан списък „Моите резервации“ (бутон, чат, `/api/bookings/mine`).
+
+### JWT вместо `userId` (действия от чуждо име)
+Преди booking-ai вярваше на `userId` от body-то – чужд `userId` даваше достъп до чужди резервации. Избран е вариант „токенът минава през Kafka и booking-system решава кой е потребителят“:
+- **booking-ui:** `aiApi.js` добавя `Authorization: Bearer <token>` към заявките към booking-ai; `userId` не се праща.
+- **booking-ai:** `ChatUser.fromAuthorization` – без токен е гост. В Kafka заявките за `create_booking`, `get_upcoming_bookings`, `cancel_booking`, `get_reservations` отива **токенът**. booking-ai не проверява подписа; `userId` от токена (непроверен) е само за логовете. Паметта на чата е по SHA-256 на токена (подправен токен с чужд `userId` не стига до чужда памет). Изтекла сесия → „сесията ви е изтекла. Моля, влезте отново в профила си.“
+- **booking-system:** `GlobalKafkaConsumer.userIdFromToken` проверява подписа със своя `jwt.secret` и взима `userId` от токена; отказите са `Login required`, `Invalid token`, `Session expired`.
+- Токенът изтича след 30 мин. – след това действията в чата искат нов вход; при всеки вход паметта на чата започва наново.
+
+### Снимките на стаите през Kafka
+- **booking-system:** отговорът на `get_available_rooms_by_dates` е `RoomWithImagesDTO` – стаите със `images: [{id, url, title}]` в реда на `imageIds`, изтритите се пропускат, една заявка за всички снимки. REST API-то не е променено.
+- **booking-ai:** препраща стаите без промяна в кода, без LLM.
+- **booking-ui:** махнати `loadImagesOnce` и директното `GET /images`; `roomImages` взима до 3 https снимки от `room.images`. Гостът също вижда снимките.
+
+### Тестове (всички без облак)
+- booking-ai: `ShortcutTest`, `ShortcutServiceTest`, `ShortcutToolRunnerTest`, `KnowledgeRepositoryTest`, `ChatUserTest`, `RoomBookingServiceTest`, `ChatHistoryServiceTest`, `BoundedChatMemoryStoreTest` (+ старите за `log`).
+- booking-system: първите тестове – `GlobalKafkaConsumerTest` (4, токенът), `HotelServiceImagesTest` (1).
+- booking-ui: `RoomImages.test.jsx` (4 – снимките от `room.images`), `ChatSession.test.jsx` (2 – `sessionId`).
+- Проверено: компилация на трите проекта, всички горни тестове минават; booking-ui `npm run build`, eslint без нови грешки.
+
+### Deploy
+booking-system и booking-ai заедно (JWT: ако booking-system е нов, а booking-ai стар, резервациите и отказите се отказват), после booking-ui. Нов UI със стар booking-system показва стаите без снимки; стар UI (без `sessionId`) с нов booking-ai – гостът е без памет, но не се смесва с други.
+
+### Дискусия: чатът като добавена услуга за други хотели
+- **UI на хотела** подава `hotelId`, токена на влезлия потребител (`getToken()`), сигнал при вход/изход и къде е входът. Нужно преди това: токенът да не се чете от `localStorage.token`, адресът и `hotelId` да се подават при вграждане, валутата и текстовете да не са твърди.
+- **Бекендът на хотела** изпълнява договора по Kafka (събития, формати, кодове на грешки, 5s), издава и сам проверява JWT с claim `userId`.
+- **Задължително преди външен хотел:** топик на хотел + ACL – сега токените на гостите минават през общ топик и всеки бекенд ги вижда.
+
 ## Сесия 2026-09-25 (3) – преглед на кода, дребни поправки, един лог на действие
 
 Продължение на (2) след неочакван рестарт на лаптопа. Работата по логването беше некомитната и беше възстановена от `git diff`.
