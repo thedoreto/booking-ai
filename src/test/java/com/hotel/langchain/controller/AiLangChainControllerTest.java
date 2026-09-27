@@ -2,6 +2,8 @@ package com.hotel.langchain.controller;
 
 import com.hotel.knowledge.service.KnowledgeService;
 import com.hotel.langchain.assistant.Assistant;
+import com.hotel.langchain.context.ChatUser;
+import com.hotel.langchain.context.ChatUserResolver;
 import com.hotel.langchain.context.TenantContext.UiAction;
 import com.hotel.langchain.controller.AiLangChainController.AvailableRoomsRequest;
 import com.hotel.langchain.controller.AiLangChainController.CancelBookingRequest;
@@ -52,9 +54,10 @@ class AiLangChainControllerTest {
     private final RoomTypeService roomTypeService = mock(RoomTypeService.class);
     private final HotelRegistry hotelRegistry = mock(HotelRegistry.class);
     private final GeminiBudget geminiBudget = mock(GeminiBudget.class);
+    private final ChatUserResolver chatUserResolver = mock(ChatUserResolver.class);
     private final AiLangChainController controller = new AiLangChainController(assistant, shortcutService,
             knowledgeService, shortcutToolRunner, chatLogService, roomBookingService, roomTypeService, hotelRegistry,
-            geminiBudget);
+            geminiBudget, chatUserResolver);
 
     {
         when(hotelRegistry.isKnown(KNOWN)).thenReturn(true);
@@ -155,6 +158,26 @@ class AiLangChainControllerTest {
     }
 
     @Test
+    void userComesFromTheResolverForTheRequestedHotel() {
+        ChatUser user = new ChatUser("user-1", "t");
+        when(chatUserResolver.resolve(KNOWN, "Bearer t")).thenReturn(user);
+        when(roomBookingService.cancelBooking(KNOWN, user, "b-1"))
+                .thenReturn(new UiAction("BOOKING_CANCELLED", "Резервацията е отказана.", null));
+
+        assertThat(controller.cancelBooking(new CancelBookingRequest(KNOWN, "b-1", null), "Bearer t").reply())
+                .isEqualTo("Резервацията е отказана.");
+        verify(roomBookingService).cancelBooking(KNOWN, user, "b-1");
+    }
+
+    @Test
+    void unverifiedTokenGetsTheGuestButtons() {
+        // Резолверът не е приел токена (подправен, изтекъл, друг хотел) – бутоните са като за гост
+        controller.getShortcuts(KNOWN, "Bearer forged");
+
+        verify(shortcutService).getShortcutsForHotel(KNOWN, true);
+    }
+
+    @Test
     void emptyMessageDoesNotGoToGemini() {
         assertThat(controller.chat(chatRequest(KNOWN, null, "  "), null).reply()).isEqualTo("Липсват съобщения.");
         assertThat(controller.chat(chatRequest(KNOWN, null, null), null).reply()).isEqualTo("Липсват съобщения.");
@@ -172,6 +195,6 @@ class AiLangChainControllerTest {
 
     private void verifyNothingElseCalled() {
         verifyNoInteractions(assistant, shortcutService, knowledgeService, shortcutToolRunner,
-                chatLogService, roomBookingService, roomTypeService, geminiBudget);
+                chatLogService, roomBookingService, roomTypeService, geminiBudget, chatUserResolver);
     }
 }

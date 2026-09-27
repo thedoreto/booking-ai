@@ -9,7 +9,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.UUID;
 
-// Паметта на разговора с асистента: по хотел и токен на влезлия потребител, а за гост – по sessionId от UI.
+// Паметта на разговора с асистента: по хотел и проверения userId на влезлия потребител (оцелява при нов вход),
+// а за гост – по sessionId от UI.
 // Действията през бутоните минават без LLM – тук ги записваме, за да знае асистентът за тях.
 @Service
 public class ChatHistoryService {
@@ -24,7 +25,7 @@ public class ChatHistoryService {
     // само за тази заявка – никога обща с други гости.
     public static String memoryId(String hotelId, ChatUser user, String sessionId) {
         if (user != null) {
-            return hotelId + ":user:" + user.memoryKey();
+            return hotelId + ":user:" + user.id();
         }
         String session = isValidSessionId(sessionId) ? sessionId : UUID.randomUUID().toString();
         return hotelId + ":guest:" + session;

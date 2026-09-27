@@ -31,11 +31,18 @@ class ChatHistoryServiceTest {
     }
 
     @Test
-    void loggedInUserMemoryDependsOnTokenNotOnSessionId() {
+    void loggedInUserMemoryDependsOnUserIdNotOnSessionId() {
         ChatUser user = new ChatUser("user-1", "token-1");
 
         assertThat(ChatHistoryService.memoryId(HOTEL, user, UUID.randomUUID().toString()))
                 .isEqualTo(ChatHistoryService.memoryId(HOTEL, user, null))
-                .startsWith(HOTEL + ":user:");
+                .isEqualTo(HOTEL + ":user:user-1");
+    }
+
+    @Test
+    void memorySurvivesNewLogin() {
+        // userId е проверен (ChatUserResolver), затова новият токен след вход продължава същия разговор
+        assertThat(ChatHistoryService.memoryId(HOTEL, new ChatUser("user-1", "token-after-login"), null))
+                .isEqualTo(ChatHistoryService.memoryId(HOTEL, new ChatUser("user-1", "token-1"), null));
     }
 }
