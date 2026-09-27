@@ -13,6 +13,7 @@ import com.hotel.langchain.log.ChatLogService;
 import com.hotel.langchain.log.GeminiUsageTracker;
 import com.hotel.langchain.model.Shortcut;
 import com.hotel.langchain.service.ChatHistoryService;
+import com.hotel.langchain.service.GeminiBudget;
 import com.hotel.langchain.service.HotelRegistry;
 import com.hotel.langchain.service.RoomBookingService;
 import com.hotel.langchain.service.RoomTypeService;
@@ -51,6 +52,7 @@ public class AiLangChainController {
     private final RoomBookingService roomBookingService;
     private final RoomTypeService roomTypeService;
     private final HotelRegistry hotelRegistry;
+    private final GeminiBudget geminiBudget;
 
     public AiLangChainController(Assistant assistant,
                                  ShortcutService shortcutService,
@@ -59,7 +61,8 @@ public class AiLangChainController {
                                  ChatLogService chatLogService,
                                  RoomBookingService roomBookingService,
                                  RoomTypeService roomTypeService,
-                                 HotelRegistry hotelRegistry) {
+                                 HotelRegistry hotelRegistry,
+                                 GeminiBudget geminiBudget) {
         this.assistant = assistant;
         this.shortcutService = shortcutService;
         this.knowledgeService = knowledgeService;
@@ -68,6 +71,7 @@ public class AiLangChainController {
         this.roomBookingService = roomBookingService;
         this.roomTypeService = roomTypeService;
         this.hotelRegistry = hotelRegistry;
+        this.geminiBudget = geminiBudget;
     }
 
     public record Message(String role, String content) {}
@@ -146,6 +150,10 @@ public class AiLangChainController {
             chatLogService.log(hotelId, logEntry);
             return new NewChatResponse(reply, null);
         }
+        GeminiBudget.Result budget = geminiBudget.tryAcquire(hotelId);
+        if (!budget.allowed()) {
+            return overBudget(hotelId, budget, logEntry);
+        }
         GeminiUsageTracker.start();
         NewChatResponse response;
 
@@ -194,6 +202,22 @@ public class AiLangChainController {
         GeminiUsageTracker.clear();
         logEntry.reply(response.reply()).gemini(usage);
         return logOrStartFlow(hotelId, request.flowId(), ChatFlow.STARTED_BY_CHAT, logEntry, response);
+    }
+
+    // Хотелът е стигнал лимита на съобщенията към Gemini (GeminiBudget) – бутоните продължават да работят.
+    // В логовете се записва само първият отказ в прозореца, за да не ги пълни скрипт.
+    private NewChatResponse overBudget(String hotelId, GeminiBudget.Result budget, ChatLogEntry logEntry) {
+        boolean daily = budget.limit() == GeminiBudget.Limit.DAY;
+        String reply = daily
+                ? "Асистентът не може да отговаря на повече въпроси днес. Моля, опитайте утре или използвайте бутоните."
+                : "Асистентът е зает в момента. Моля, опитайте отново след минута.";
+        if (budget.firstRejection()) {
+            System.out.println("Gemini limit reached for hotelId=" + hotelId + ": " + budget.limit());
+            logEntry.outcome(ChatLogEntry.REJECTED, daily ? ChatLogEntry.HOTEL_LIMIT_DAY : ChatLogEntry.HOTEL_LIMIT_MINUTE)
+                    .reply(reply);
+            chatLogService.log(hotelId, logEntry);
+        }
+        return new NewChatResponse(reply, null);
     }
 
     // Календар или списък с резервации: заявката е първа стъпка в действие (ChatFlow) и UI получава flowId,

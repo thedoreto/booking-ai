@@ -13,6 +13,7 @@ import com.hotel.langchain.controller.AiLangChainController.NewChatResponse;
 import com.hotel.langchain.log.ChatLogEntry;
 import com.hotel.langchain.log.ChatLogService;
 import com.hotel.langchain.model.Shortcut;
+import com.hotel.langchain.service.GeminiBudget;
 import com.hotel.langchain.service.HotelRegistry;
 import com.hotel.langchain.service.RoomBookingService;
 import com.hotel.langchain.service.RoomTypeService;
@@ -28,12 +29,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 // Проверките на входа: непознат hotelId се отказва на всеки адрес, преди логовете (logs_<hotelId>), Gemini и Kafka;
-// твърде дълго или празно съобщение не стига до Gemini
+// твърде дълго или празно съобщение и хотел над лимита (GeminiBudget) не стигат до Gemini
 class AiLangChainControllerTest {
 
     private static final String KNOWN = "seven_stars";
@@ -49,11 +51,14 @@ class AiLangChainControllerTest {
     private final RoomBookingService roomBookingService = mock(RoomBookingService.class);
     private final RoomTypeService roomTypeService = mock(RoomTypeService.class);
     private final HotelRegistry hotelRegistry = mock(HotelRegistry.class);
+    private final GeminiBudget geminiBudget = mock(GeminiBudget.class);
     private final AiLangChainController controller = new AiLangChainController(assistant, shortcutService,
-            knowledgeService, shortcutToolRunner, chatLogService, roomBookingService, roomTypeService, hotelRegistry);
+            knowledgeService, shortcutToolRunner, chatLogService, roomBookingService, roomTypeService, hotelRegistry,
+            geminiBudget);
 
     {
         when(hotelRegistry.isKnown(KNOWN)).thenReturn(true);
+        when(geminiBudget.tryAcquire(KNOWN)).thenReturn(new GeminiBudget.Result(null, false));
     }
 
     @Test
@@ -123,6 +128,33 @@ class AiLangChainControllerTest {
     }
 
     @Test
+    void hotelOverTheGeminiLimitGetsNoGemini() {
+        when(geminiBudget.tryAcquire(KNOWN))
+                .thenReturn(new GeminiBudget.Result(GeminiBudget.Limit.MINUTE, true))
+                .thenReturn(new GeminiBudget.Result(GeminiBudget.Limit.MINUTE, false))
+                .thenReturn(new GeminiBudget.Result(GeminiBudget.Limit.DAY, true));
+
+        assertThat(controller.chat(chatRequest(KNOWN, null), null).reply())
+                .isEqualTo("Асистентът е зает в момента. Моля, опитайте отново след минута.");
+        assertThat(controller.chat(chatRequest(KNOWN, null), null).reply())
+                .isEqualTo("Асистентът е зает в момента. Моля, опитайте отново след минута.");
+        assertThat(controller.chat(chatRequest(KNOWN, null), null).reply()).startsWith("Асистентът не може да отговаря");
+
+        verifyNoInteractions(assistant);
+        // Само първите откази в прозореца се записват в логовете
+        ArgumentCaptor<ChatLogEntry> logEntry = ArgumentCaptor.forClass(ChatLogEntry.class);
+        verify(chatLogService, times(2)).log(eq(KNOWN), logEntry.capture());
+        assertThat(logEntry.getAllValues()).allMatch(entry -> ChatLogEntry.REJECTED.equals(entry.outcome()));
+    }
+
+    @Test
+    void buttonsDoNotCountTowardsTheGeminiLimit() {
+        controller.chat(chatRequest(KNOWN, "parking"), null);
+
+        verifyNoInteractions(geminiBudget);
+    }
+
+    @Test
     void emptyMessageDoesNotGoToGemini() {
         assertThat(controller.chat(chatRequest(KNOWN, null, "  "), null).reply()).isEqualTo("Липсват съобщения.");
         assertThat(controller.chat(chatRequest(KNOWN, null, null), null).reply()).isEqualTo("Липсват съобщения.");
@@ -140,6 +172,6 @@ class AiLangChainControllerTest {
 
     private void verifyNothingElseCalled() {
         verifyNoInteractions(assistant, shortcutService, knowledgeService, shortcutToolRunner,
-                chatLogService, roomBookingService, roomTypeService);
+                chatLogService, roomBookingService, roomTypeService, geminiBudget);
     }
 }

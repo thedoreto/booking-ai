@@ -31,6 +31,8 @@ public class ChatLogEntry {
     public static final String BACKEND_ERROR = "BACKEND_ERROR";
     public static final String INTERNAL = "INTERNAL";
     public static final String MESSAGE_TOO_LONG = "MESSAGE_TOO_LONG";
+    public static final String HOTEL_LIMIT_MINUTE = "HOTEL_LIMIT_MINUTE";
+    public static final String HOTEL_LIMIT_DAY = "HOTEL_LIMIT_DAY";
 
     // Текстовете на госта и асистента се пазят съкратени (лични данни)
     public static final int MAX_TEXT_LENGTH = 500;
