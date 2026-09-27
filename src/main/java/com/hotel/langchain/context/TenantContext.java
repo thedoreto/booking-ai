@@ -23,7 +23,11 @@ public class TenantContext {
     }
 
     public static String getHotelId() {
-        return CURRENT_HOTEL_ID.get() != null ? CURRENT_HOTEL_ID.get() : "knowledge_seven_stars"; // Дефолтна стойност
+        String hotelId = CURRENT_HOTEL_ID.get();
+        if (hotelId == null) {
+            throw new IllegalStateException("Липсва hotelId в TenantContext");
+        }
+        return hotelId;
     }
 
     public static void setUser(ChatUser user) {

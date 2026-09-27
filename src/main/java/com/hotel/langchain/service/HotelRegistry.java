@@ -1,5 +1,6 @@
 package com.hotel.langchain.service;
 
+import com.hotel.knowledge.service.KnowledgeService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.stereotype.Service;
@@ -19,7 +20,6 @@ import java.util.stream.Collectors;
 @Service
 public class HotelRegistry {
 
-    private static final String KNOWLEDGE_PREFIX = "knowledge_";
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
     private static final Duration REFRESH_AFTER = Duration.ofMinutes(1);
 
@@ -57,8 +57,8 @@ public class HotelRegistry {
         }
         try {
             knownHotels = mongoTemplate.getCollectionNames().stream()
-                    .filter(name -> name.startsWith(KNOWLEDGE_PREFIX))
-                    .map(name -> name.substring(KNOWLEDGE_PREFIX.length()))
+                    .filter(name -> name.startsWith(KnowledgeService.COLLECTION_PREFIX))
+                    .map(name -> name.substring(KnowledgeService.COLLECTION_PREFIX.length()))
                     .collect(Collectors.toUnmodifiableSet());
         } catch (Exception e) {
             // Остава старият списък; следващият опит – след REFRESH_AFTER

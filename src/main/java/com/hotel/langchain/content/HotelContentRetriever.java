@@ -27,12 +27,8 @@ public class HotelContentRetriever implements ContentRetriever {
     @Override
     public List<Content> retrieve(Query query) {
         try {
-            // Взимаме динамичния hotelId, който дойде от UI през контролера
-            String hotelId = TenantContext.getHotelId();
-
-            // Ако колекцията ви зависи директно от hotelId или се образува с префикс:
-            // String collectionName = "knowledge_" + hotelId;
-            String collectionName = "knowledge_" + hotelId; // Или ако в UI ви подават директно името на колекцията
+            // hotelId, който дойде от UI през контролера; знанията на хотела са в knowledge_<hotelId>
+            String collectionName = KnowledgeService.COLLECTION_PREFIX + TenantContext.getHotelId();
 
             List<KnowledgeDocument> documents = knowledgeService.findRelevant(query.text(), collectionName);
 

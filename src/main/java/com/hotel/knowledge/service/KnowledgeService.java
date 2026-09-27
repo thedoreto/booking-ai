@@ -13,6 +13,9 @@ import java.util.stream.Collectors;
 @Service
 public class KnowledgeService {
 
+    // Знанията на всеки хотел са в колекция knowledge_<hotelId>
+    public static final String COLLECTION_PREFIX = "knowledge_";
+
     private final KnowledgeRepository knowledgeRepo;
     private final EmbeddingModel embeddingModel;
 
@@ -28,7 +31,7 @@ public class KnowledgeService {
             return List.of();
         }
         List<ObjectId> validIds = ids.stream().filter(Objects::nonNull).toList();
-        return validIds.isEmpty() ? List.of() : knowledgeRepo.findTextsByIds(validIds, "knowledge_" + hotelId);
+        return validIds.isEmpty() ? List.of() : knowledgeRepo.findTextsByIds(validIds, COLLECTION_PREFIX + hotelId);
     }
 
     public List<KnowledgeDocument> findRelevant(

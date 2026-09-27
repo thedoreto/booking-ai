@@ -26,6 +26,8 @@ import java.util.function.Consumer;
 @Service
 public class ChatLogService {
 
+    // Логовете на всеки хотел са в колекция logs_<hotelId>
+    private static final String COLLECTION_PREFIX = "logs_";
     private static final Duration RETENTION = Duration.ofDays(180);
     // Колко записа могат да чакат, ако Mongo е бавен; над това новите се изпускат
     private static final int MAX_PENDING = 1_000;
@@ -85,7 +87,7 @@ public class ChatLogService {
     }
 
     private void write(String hotelId, Consumer<String> action) {
-        String collection = "logs_" + hotelId;
+        String collection = COLLECTION_PREFIX + hotelId;
         CompletableFuture.runAsync(() -> {
             ensureIndexes(collection);
             action.accept(collection);
