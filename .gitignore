@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Настройки с тайни – само локално, никога в git ###
+src/main/resources/application.properties
