@@ -10,14 +10,8 @@ public class OpenDatePickerException extends RuntimeException {
 
     public static final String SPECIAL_ACTION_OPEN_DATE_PICKER = "SPECIAL_ACTION:OPEN_DATE_PICKER";
     public static final String OPEN_DATE_PICKER_ACTION = "OPEN_DATE_PICKER";
-    public static final String DATE_PICKER_REPLY = "Моля, изберете период за настаняване от календара, за да продължим.";
-
-    public OpenDatePickerException() {
-        this(null, null, null);
-    }
-
-    // startDate/endDate/roomType (може null) – с тях UI попълва календара предварително
-    public OpenDatePickerException(LocalDate startDate, LocalDate endDate, String roomType) {
+    // startDate/endDate/roomType (може null) – с тях UI попълва календара предварително; reply – текстът над календара
+    public OpenDatePickerException(LocalDate startDate, LocalDate endDate, String roomType, String reply) {
         super(SPECIAL_ACTION_OPEN_DATE_PICKER);
         Map<String, Object> prefill = new HashMap<>();
         if (startDate != null) {
@@ -30,6 +24,6 @@ public class OpenDatePickerException extends RuntimeException {
             prefill.put("roomType", roomType);
         }
         TenantContext.requestUiAction(
-                new TenantContext.UiAction(OPEN_DATE_PICKER_ACTION, DATE_PICKER_REPLY, prefill));
+                new TenantContext.UiAction(OPEN_DATE_PICKER_ACTION, reply, prefill));
     }
 }

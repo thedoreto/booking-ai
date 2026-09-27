@@ -26,14 +26,14 @@ class RoomBookingServiceTest {
 
     private final HotelBackendClient backendClient = mock(HotelBackendClient.class);
     private final RoomBookingService service = new RoomBookingService(
-            backendClient, mock(RoomTypeService.class), mock(ChatHistoryService.class));
+            backendClient, mock(RoomTypeService.class), mock(ChatHistoryService.class), TestTranslations.keys());
 
     @Test
     void guestIsRejectedWithoutCallingTheBackend() throws Exception {
-        assertThat(service.createBookings(HOTEL, null, "2099-10-30", "2099-11-02", List.of("r-1")).outcome())
+        assertThat(service.createBookings(HOTEL, null, "2099-10-30", "2099-11-02", List.of("r-1"), null).outcome())
                 .isEqualTo(ChatLogEntry.REJECTED);
-        assertThat(service.myBookings(HOTEL, null).outcome()).isEqualTo(ChatLogEntry.REJECTED);
-        assertThat(service.cancelBooking(HOTEL, null, "b-1").outcome()).isEqualTo(ChatLogEntry.REJECTED);
+        assertThat(service.myBookings(HOTEL, null, null).outcome()).isEqualTo(ChatLogEntry.REJECTED);
+        assertThat(service.cancelBooking(HOTEL, null, "b-1", null).outcome()).isEqualTo(ChatLogEntry.REJECTED);
 
         verify(backendClient, never()).request(anyString(), anyString(), any());
     }
@@ -42,9 +42,9 @@ class RoomBookingServiceTest {
     void userActionsSendTheTokenNotUserId() throws Exception {
         when(backendClient.request(eq(HOTEL), anyString(), any())).thenReturn(List.of());
 
-        service.myBookings(HOTEL, USER);
-        service.cancelBooking(HOTEL, USER, "b-1");
-        service.createBookings(HOTEL, USER, "2099-10-30", "2099-11-02", List.of("r-1"));
+        service.myBookings(HOTEL, USER, null);
+        service.cancelBooking(HOTEL, USER, "b-1", null);
+        service.createBookings(HOTEL, USER, "2099-10-30", "2099-11-02", List.of("r-1"), null);
 
         verify(backendClient).request(HOTEL, "get_upcoming_bookings", Map.of("token", "token-1"));
         verify(backendClient).request(HOTEL, "cancel_booking", Map.of("token", "token-1", "bookingId", "b-1"));
@@ -57,8 +57,8 @@ class RoomBookingServiceTest {
         when(backendClient.request(eq(HOTEL), eq("get_upcoming_bookings"), any()))
                 .thenThrow(new HotelBackendClient.HotelBackendException("Session expired"));
 
-        UiAction result = service.myBookings(HOTEL, USER);
+        UiAction result = service.myBookings(HOTEL, USER, null);
 
-        assertThat(result.reply()).contains("сесията ви е изтекла");
+        assertThat(result.reply()).contains("backendError.sessionExpired");
     }
 }

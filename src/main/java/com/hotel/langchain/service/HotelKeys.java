@@ -1,6 +1,6 @@
 package com.hotel.langchain.service;
 
-import org.bson.Document;
+import com.hotel.langchain.model.HotelSettings;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.stereotype.Service;
@@ -17,15 +17,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
-// Публичните ключове, с които всеки хотел проверява своите JWT: колекция hotels
-// ({ _id: <hotelId>, jwtPublicKey: <PEM или base64 на един ред> }). Частният ключ е само в booking-system на хотела,
+// Публичните ключове, с които всеки хотел проверява своите JWT: колекция hotel_settings (модел HotelSettings,
+// jwtPublicKey: <PEM или base64 на един ред>). Частният ключ е само в booking-system на хотела,
 // така че booking-ai може да проверява токените, но не и да ги издава. Ключовете се пазят в паметта:
 // презареждат се на REFRESH_AFTER, а за хотел без ключ – най-рано след RETRY_MISSING_AFTER (нов или сменен ключ
 // влиза без рестарт, а заявки за хотел без ключ не питат Mongo всеки път).
 @Service
 public class HotelKeys {
 
-    private static final String COLLECTION = "hotels";
     private static final Duration REFRESH_AFTER = Duration.ofMinutes(5);
     private static final Duration RETRY_MISSING_AFTER = Duration.ofMinutes(1);
 
@@ -62,10 +61,14 @@ public class HotelKeys {
         }
         try {
             Map<String, PublicKey> loaded = new HashMap<>();
-            for (Document hotel : mongoTemplate.findAll(Document.class, COLLECTION)) {
-                String hotelId = String.valueOf(hotel.get("_id"));
+            for (HotelSettings settings : mongoTemplate.findAll(HotelSettings.class)) {
+                String hotelId = settings.getHotelId();
+                if (hotelId == null || hotelId.isBlank()) {
+                    System.err.println("hotel_settings document without hotelId: _id=" + settings.getId());
+                    continue;
+                }
                 try {
-                    loaded.put(hotelId, parse(hotel.getString("jwtPublicKey")));
+                    loaded.put(hotelId, parse(settings.getJwtPublicKey()));
                 } catch (Exception e) {
                     System.err.println("Invalid jwtPublicKey for hotelId=" + hotelId + ": " + e.getMessage());
                 }

@@ -6,6 +6,8 @@ public class TenantContext {
     private static final ThreadLocal<String> CURRENT_HOTEL_ID = new ThreadLocal<>();
     // Влезлият потребител (токен от UI); null – гост
     private static final ThreadLocal<ChatUser> CURRENT_USER = new ThreadLocal<>();
+    // Кодът на езика, на който отговаряме (HotelLanguages.resolve); null – извън заявка от контролера
+    private static final ThreadLocal<String> CURRENT_LANGUAGE = new ThreadLocal<>();
     // Действие за UI, поискано от tool по време на заявката (календар, избор на стаи...)
     private static final ThreadLocal<UiAction> UI_ACTION = new ThreadLocal<>();
     // Грешка в tool, който връща само текст на модела (без UiAction) – за логовете (ChatLogEntry.errorType)
@@ -38,6 +40,14 @@ public class TenantContext {
         return CURRENT_USER.get();
     }
 
+    public static void setLanguage(String language) {
+        CURRENT_LANGUAGE.set(language);
+    }
+
+    public static String getLanguage() {
+        return CURRENT_LANGUAGE.get();
+    }
+
     public static void requestUiAction(UiAction action) {
         UI_ACTION.set(action);
     }
@@ -59,5 +69,6 @@ public class TenantContext {
         TOOL_ERROR.remove();
         CURRENT_HOTEL_ID.remove();
         CURRENT_USER.remove();
+        CURRENT_LANGUAGE.remove();
     }
 }

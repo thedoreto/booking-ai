@@ -6,6 +6,7 @@ import com.hotel.langchain.exception.OpenDatePickerException;
 import com.hotel.langchain.service.HotelBackendClient;
 import com.hotel.langchain.service.RoomBookingService;
 import com.hotel.langchain.service.RoomTypeService;
+import com.hotel.langchain.service.TestTranslations;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,7 +23,7 @@ class ShortcutToolRunnerTest {
 
     private final RoomBookingService roomBookingService = mock(RoomBookingService.class);
     private final ShortcutToolRunner runner = new ShortcutToolRunner(new HotelTools(
-            mock(HotelBackendClient.class), mock(RoomTypeService.class), roomBookingService));
+            mock(HotelBackendClient.class), mock(RoomTypeService.class), roomBookingService, TestTranslations.keys()));
 
     @BeforeEach
     void setTenant() {
@@ -47,7 +48,7 @@ class ShortcutToolRunnerTest {
     @Test
     void toolRunsWithTheCurrentUser() {
         TenantContext.UiAction bookings = new TenantContext.UiAction("MY_BOOKINGS", "Вашите резервации", Map.of());
-        when(roomBookingService.myBookings("seven_stars", USER)).thenReturn(bookings);
+        when(roomBookingService.myBookings("seven_stars", USER, null)).thenReturn(bookings);
 
         assertThat(runner.run("showMyBookings")).contains("Вашите резервации");
         assertThat(TenantContext.getUiAction()).isEqualTo(bookings);

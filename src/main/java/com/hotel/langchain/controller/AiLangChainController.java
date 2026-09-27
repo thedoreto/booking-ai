@@ -15,10 +15,12 @@ import com.hotel.langchain.log.GeminiUsageTracker;
 import com.hotel.langchain.model.Shortcut;
 import com.hotel.langchain.service.ChatHistoryService;
 import com.hotel.langchain.service.GeminiBudget;
+import com.hotel.langchain.service.HotelLanguages;
 import com.hotel.langchain.service.HotelRegistry;
 import com.hotel.langchain.service.RoomBookingService;
 import com.hotel.langchain.service.RoomTypeService;
 import com.hotel.langchain.service.ShortcutService;
+import com.hotel.langchain.service.TranslationService;
 import com.hotel.langchain.tools.ShortcutToolRunner;
 import dev.langchain4j.data.message.ChatMessage;
 import lombok.extern.slf4j.Slf4j;
@@ -39,8 +41,6 @@ import java.util.Optional;
 @RequestMapping("/api")
 public class AiLangChainController {
 
-    private static final String NOT_FOUND_REPLY = "Информацията не е намерена.";
-    private static final String UNKNOWN_HOTEL_REPLY = "Хотелът не е намерен.";
     // По-дълго съобщение не стига до Gemini (токени от общата квота). Колкото дължината в логовете –
     // всеки въпрос, който минава, се записва цял.
     private static final int MAX_MESSAGE_LENGTH = ChatLogEntry.MAX_TEXT_LENGTH;
@@ -55,6 +55,8 @@ public class AiLangChainController {
     private final HotelRegistry hotelRegistry;
     private final GeminiBudget geminiBudget;
     private final ChatUserResolver chatUserResolver;
+    private final HotelLanguages hotelLanguages;
+    private final TranslationService translations;
 
     public AiLangChainController(Assistant assistant,
                                  ShortcutService shortcutService,
@@ -65,7 +67,9 @@ public class AiLangChainController {
                                  RoomTypeService roomTypeService,
                                  HotelRegistry hotelRegistry,
                                  GeminiBudget geminiBudget,
-                                 ChatUserResolver chatUserResolver) {
+                                 ChatUserResolver chatUserResolver,
+                                 HotelLanguages hotelLanguages,
+                                 TranslationService translations) {
         this.assistant = assistant;
         this.shortcutService = shortcutService;
         this.knowledgeService = knowledgeService;
@@ -76,6 +80,8 @@ public class AiLangChainController {
         this.hotelRegistry = hotelRegistry;
         this.geminiBudget = geminiBudget;
         this.chatUserResolver = chatUserResolver;
+        this.hotelLanguages = hotelLanguages;
+        this.translations = translations;
     }
 
     public record Message(String role, String content) {}
@@ -107,12 +113,17 @@ public class AiLangChainController {
 
     public record CancelBookingRequest(String hotelId, String bookingId, String flowId) {}
 
+    // languages – за менюто с езици в чата (в този ред); language – езикът, на който отговаряме
+    public record ChatSettings(List<HotelLanguages.Language> languages, String language) {}
+
     @PostMapping("/chat")
-    public NewChatResponse chat(@RequestBody ChatRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+    public NewChatResponse chat(@RequestBody ChatRequest request,
+                                @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage) {
         if (request == null) {
-            return new NewChatResponse("Липсва заявка.", null);
+            return new NewChatResponse(translations.message("chat.missingRequest", requested(acceptLanguage)), null);
         }
-        NewChatResponse hotelError = hotelError(request.hotelId());
+        NewChatResponse hotelError = hotelError(request.hotelId(), acceptLanguage);
         if (hotelError != null) {
             return hotelError;
         }
@@ -124,12 +135,13 @@ public class AiLangChainController {
 
         try {
             setTenant(request.hotelId(), user);
+            TenantContext.setLanguage(hotelLanguages.resolve(request.hotelId(), acceptLanguage));
             if (hasText(request.shortcutId())) {
                 return handleShortcut(request.hotelId(), user, request.shortcutId(), request.flowId());
             }
 
             if (request.messages() == null || request.messages().isEmpty()) {
-                return new NewChatResponse("Липсват съобщения.", null);
+                return new NewChatResponse(text("chat.missingMessages"), null);
             }
 
             return handleChat(request, user);
@@ -143,11 +155,12 @@ public class AiLangChainController {
         Message lastMessage = request.messages().get(request.messages().size() - 1);
         String userText = lastMessage != null ? lastMessage.content() : null;
         if (!hasText(userText)) {
-            return new NewChatResponse("Липсват съобщения.", null);
+            return new NewChatResponse(text("chat.missingMessages"), null);
         }
         ChatLogEntry logEntry = ChatLogEntry.start(ChatLogEntry.CHAT, userIdOf(user)).userMessage(userText);
         if (userText.length() > MAX_MESSAGE_LENGTH) {
-            String reply = "Съобщението е твърде дълго. Моля, съкратете го до " + MAX_MESSAGE_LENGTH + " знака.";
+            String reply = translations.message("chat.messageTooLong", TenantContext.getLanguage(),
+                    Map.of("max", MAX_MESSAGE_LENGTH));
             logEntry.outcome(ChatLogEntry.REJECTED, ChatLogEntry.MESSAGE_TOO_LONG)
                     .detail("length", userText.length())
                     .reply(reply);
@@ -171,7 +184,8 @@ public class AiLangChainController {
             // Отделна история за всеки хотел и потребител
             String memoryId = ChatHistoryService.memoryId(hotelId, user, request.sessionId());
             String roomTypes = roomTypeService.describeForPrompt(hotelId);
-            String aiReply = assistant.chat(memoryId, hotelId, formattedDate, dayOfWeek, roomTypes, userText);
+            String language = hotelLanguages.nameOf(hotelId, TenantContext.getLanguage());
+            String aiReply = assistant.chat(memoryId, hotelId, formattedDate, dayOfWeek, roomTypes, language, userText);
 
             // Tool е поискал действие в UI (календар, избор на стаи) – връщаме го вместо текста от модела
             TenantContext.UiAction uiAction = TenantContext.getUiAction();
@@ -190,15 +204,15 @@ public class AiLangChainController {
             if (isQuotaExceeded(e)) {
                 log.warn("Gemini API quota exceeded for hotelId={}: {}", hotelId, e.getMessage());
                 logEntry.error(ChatLogEntry.GEMINI_QUOTA_429);
-                response = new NewChatResponse("Изчерпахте безплатните заявки към AI асистента. Моля, опитайте отново по-късно!", null);
+                response = new NewChatResponse(text("chat.geminiQuotaExhausted"), null);
             } else if (RetryingChatLanguageModel.isModelOverloaded(e)) {
                 log.warn("Gemini model overloaded for hotelId={}: {}", hotelId, e.getMessage());
                 logEntry.error(ChatLogEntry.GEMINI_OVERLOADED_503);
-                response = new NewChatResponse("В момента асистентът е претоварен. Моля, опитайте отново след минута.", null);
+                response = new NewChatResponse(text("chat.geminiOverloaded"), null);
             } else {
                 log.error("Chat failed for hotelId={}, userId={}", hotelId, userIdOf(user), e);
                 logEntry.error(ChatLogEntry.INTERNAL);
-                response = new NewChatResponse("Възникна техническа грешка при връзката с асистента. Моля, опитайте по-късно.", null);
+                response = new NewChatResponse(text("chat.geminiError"), null);
             }
         }
 
@@ -212,9 +226,7 @@ public class AiLangChainController {
     // В логовете се записва само първият отказ в прозореца, за да не ги пълни скрипт.
     private NewChatResponse overBudget(String hotelId, GeminiBudget.Result budget, ChatLogEntry logEntry) {
         boolean daily = budget.limit() == GeminiBudget.Limit.DAY;
-        String reply = daily
-                ? "Асистентът не може да отговаря на повече въпроси днес. Моля, опитайте утре или използвайте бутоните."
-                : "Асистентът е зает в момента. Моля, опитайте отново след минута.";
+        String reply = text(daily ? "chat.hotelLimitDay" : "chat.hotelLimitMinute");
         if (budget.firstRejection()) {
             System.out.println("Gemini limit reached for hotelId=" + hotelId + ": " + budget.limit());
             logEntry.outcome(ChatLogEntry.REJECTED, daily ? ChatLogEntry.HOTEL_LIMIT_DAY : ChatLogEntry.HOTEL_LIMIT_MINUTE)
@@ -289,14 +301,24 @@ public class AiLangChainController {
 
     // null – хотелът съществува; иначе отговорът за UI. Непознат хотел не стига до логовете
     // (не създава logs_<hotelId>), Gemini и Kafka – виж HotelRegistry.
-    private NewChatResponse hotelError(String hotelId) {
+    // Хотелът още не е проверен – езикът е поисканият, без да се сверява с езиците на хотела
+    private NewChatResponse hotelError(String hotelId, String acceptLanguage) {
         if (!hasText(hotelId)) {
-            return new NewChatResponse("Липсва хотел.", null);
+            return new NewChatResponse(translations.message("chat.missingHotel", requested(acceptLanguage)), null);
         }
         if (!hotelRegistry.isKnown(hotelId)) {
-            return new NewChatResponse(UNKNOWN_HOTEL_REPLY, null);
+            return new NewChatResponse(translations.message("chat.unknownHotel", requested(acceptLanguage)), null);
         }
         return null;
+    }
+
+    private static String requested(String acceptLanguage) {
+        return acceptLanguage == null ? null : acceptLanguage.trim().toLowerCase(Locale.ROOT);
+    }
+
+    // Текстът на езика на текущата заявка към /api/chat (TenantContext)
+    private String text(String key) {
+        return translations.message(key, TenantContext.getLanguage());
     }
 
     private boolean hasText(String value) {
@@ -312,7 +334,7 @@ public class AiLangChainController {
         } catch (Exception e) {
             log.error("Shortcut failed for hotelId={}, shortcutId={}", hotelId, shortcutId, e);
             logEntry.error(ChatLogEntry.INTERNAL);
-            response = new NewChatResponse("Възникна техническа грешка. Моля, опитайте по-късно.", null);
+            response = new NewChatResponse(text("common.technicalError"), null);
         }
         logEntry.reply(response.reply());
         return logOrStartFlow(hotelId, bookingFlowId, ChatFlow.STARTED_BY_BUTTON, logEntry, response);
@@ -326,12 +348,12 @@ public class AiLangChainController {
         }
         if (shortcut == null) {
             logEntry.outcome(ChatLogEntry.NO_RESULT, null);
-            return new NewChatResponse(NOT_FOUND_REPLY, null);
+            return new NewChatResponse(text("chat.notFound"), null);
         }
         Shortcut.Action action = shortcut.getAction();
         if (action == null) {
             logEntry.detail("label", shortcut.getLabel()).outcome(ChatLogEntry.NO_RESULT, null);
-            return new NewChatResponse(NOT_FOUND_REPLY, null);
+            return new NewChatResponse(text("chat.notFound"), null);
         }
         logEntry.detail("label", shortcut.getLabel())
                 .detail("actionType", action.getType())
@@ -347,7 +369,7 @@ public class AiLangChainController {
             }
             if (toolReply.isEmpty() || toolReply.get().isBlank()) {
                 logEntry.outcome(ChatLogEntry.NO_RESULT, null);
-                return new NewChatResponse(NOT_FOUND_REPLY, null);
+                return new NewChatResponse(text("chat.notFound"), null);
             }
             if (TenantContext.getToolError() != null) {
                 logEntry.error(TenantContext.getToolError());
@@ -362,17 +384,19 @@ public class AiLangChainController {
         }
 
         logEntry.outcome(ChatLogEntry.NO_RESULT, null);
-        return new NewChatResponse(NOT_FOUND_REPLY, null);
+        return new NewChatResponse(text("chat.notFound"), null);
     }
 
     // Избрани дати от календара -> свободни стаи директно от booking-system, без LLM.
     // Стъпка в новата резервация (ChatFlow); без flowId – календарът е отворен от бутона.
     @PostMapping("/rooms/available")
-    public NewChatResponse availableRooms(@RequestBody AvailableRoomsRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
-        NewChatResponse hotelError = hotelError(request != null ? request.hotelId() : null);
+    public NewChatResponse availableRooms(@RequestBody AvailableRoomsRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                          @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage) {
+        NewChatResponse hotelError = hotelError(request != null ? request.hotelId() : null, acceptLanguage);
         if (hotelError != null) {
             return hotelError;
         }
+        String language = hotelLanguages.resolve(request.hotelId(), acceptLanguage);
         String flowId = ChatFlow.idOrNew(request.flowId());
         ChatLogEntry step = ChatLogEntry.start(ChatLogEntry.SEARCH, userIdOf(chatUserResolver.resolve(request.hotelId(), authorization)))
                 .detail("startDate", request.startDate())
@@ -381,14 +405,14 @@ public class AiLangChainController {
         NewChatResponse response;
         try {
             TenantContext.UiAction result = roomBookingService.findAvailableRooms(
-                    request.hotelId(), request.startDate(), request.endDate(), request.roomType());
+                    request.hotelId(), request.startDate(), request.endDate(), request.roomType(), language);
             if (result.data() instanceof Map<?, ?> data && data.get("rooms") instanceof List<?> rooms) {
                 step.detail("roomsFound", rooms.size());
             }
             response = toResponse(step, result);
         } catch (Exception e) {
             log.error("Available rooms failed for hotelId={}", request.hotelId(), e);
-            response = failure(step, "Възникна техническа грешка при търсене на стаи. Моля, опитайте по-късно.");
+            response = failure(step, translations.message("rooms.searchFailed", language));
         }
         chatLogService.logStep(request.hotelId(), flowId, ChatFlow.NEW_BOOKING, ChatFlow.STARTED_BY_BUTTON,
                 ChatFlow.searchStatus(step.outcome()), step);
@@ -397,11 +421,13 @@ public class AiLangChainController {
 
     // Избрани стаи от списъка -> резервация директно в booking-system, без LLM. Стъпка в новата резервация.
     @PostMapping("/bookings")
-    public NewChatResponse createBooking(@RequestBody CreateBookingRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
-        NewChatResponse hotelError = hotelError(request != null ? request.hotelId() : null);
+    public NewChatResponse createBooking(@RequestBody CreateBookingRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                         @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage) {
+        NewChatResponse hotelError = hotelError(request != null ? request.hotelId() : null, acceptLanguage);
         if (hotelError != null) {
             return hotelError;
         }
+        String language = hotelLanguages.resolve(request.hotelId(), acceptLanguage);
         ChatUser user = chatUserResolver.resolve(request.hotelId(), authorization);
         String flowId = ChatFlow.idOrNew(request.flowId());
         ChatLogEntry step = ChatLogEntry.start(ChatLogEntry.BOOKING, userIdOf(user))
@@ -411,7 +437,7 @@ public class AiLangChainController {
         NewChatResponse response;
         try {
             TenantContext.UiAction result = roomBookingService.createBookings(request.hotelId(), user,
-                    request.startDate(), request.endDate(), request.roomIds());
+                    request.startDate(), request.endDate(), request.roomIds(), language);
             if (result.data() instanceof List<?> bookings) {
                 step.detail("bookingIds", bookings.stream().map(b -> field(b, "id")).toList())
                         .detail("nights", bookings.isEmpty() ? null : field(bookings.get(0), "nights"))
@@ -420,7 +446,7 @@ public class AiLangChainController {
             response = toResponse(step, result);
         } catch (Exception e) {
             log.error("Booking failed for hotelId={}, userId={}", request.hotelId(), userIdOf(user), e);
-            response = failure(step, "Възникна техническа грешка при резервацията. Моля, опитайте по-късно.");
+            response = failure(step, translations.message("booking.failed", language));
         }
         chatLogService.logStep(request.hotelId(), flowId, ChatFlow.NEW_BOOKING, ChatFlow.STARTED_BY_BUTTON,
                 ChatFlow.bookingStatus(step.outcome()), step);
@@ -430,20 +456,22 @@ public class AiLangChainController {
     // Предстоящите резервации на потребителя като картички (MY_BOOKINGS), без LLM.
     // Показан списък започва действие за отказ; празен списък или грешка е отделен запис.
     @PostMapping("/bookings/mine")
-    public NewChatResponse myBookings(@RequestBody MyBookingsRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
-        NewChatResponse hotelError = hotelError(request != null ? request.hotelId() : null);
+    public NewChatResponse myBookings(@RequestBody MyBookingsRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                      @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage) {
+        NewChatResponse hotelError = hotelError(request != null ? request.hotelId() : null, acceptLanguage);
         if (hotelError != null) {
             return hotelError;
         }
+        String language = hotelLanguages.resolve(request.hotelId(), acceptLanguage);
         ChatUser user = chatUserResolver.resolve(request.hotelId(), authorization);
         ChatLogEntry logEntry = ChatLogEntry.start(ChatLogEntry.MY_BOOKINGS, userIdOf(user));
         NewChatResponse response;
         try {
-            TenantContext.UiAction result = roomBookingService.myBookings(request.hotelId(), user);
+            TenantContext.UiAction result = roomBookingService.myBookings(request.hotelId(), user, language);
             response = toResponse(logEntry, result);
         } catch (Exception e) {
             log.error("My bookings failed for hotelId={}, userId={}", request.hotelId(), userIdOf(user), e);
-            response = failure(logEntry, "Възникна техническа грешка при зареждане на резервациите. Моля, опитайте по-късно.");
+            response = failure(logEntry, translations.message("myBookings.failed", language));
         }
         return logOrStartFlow(request.hotelId(), null, ChatFlow.STARTED_BY_BUTTON, logEntry, response);
     }
@@ -451,11 +479,13 @@ public class AiLangChainController {
     // Бутон „Откажи“ на картичка -> отказ директно в booking-system, без LLM; записва се в паметта на чата.
     // Стъпка в действието за отказ, започнало с показания списък.
     @PostMapping("/bookings/cancel")
-    public NewChatResponse cancelBooking(@RequestBody CancelBookingRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
-        NewChatResponse hotelError = hotelError(request != null ? request.hotelId() : null);
+    public NewChatResponse cancelBooking(@RequestBody CancelBookingRequest request, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                         @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage) {
+        NewChatResponse hotelError = hotelError(request != null ? request.hotelId() : null, acceptLanguage);
         if (hotelError != null) {
             return hotelError;
         }
+        String language = hotelLanguages.resolve(request.hotelId(), acceptLanguage);
         ChatUser user = chatUserResolver.resolve(request.hotelId(), authorization);
         String flowId = ChatFlow.idOrNew(request.flowId());
         ChatLogEntry step = ChatLogEntry.start(ChatLogEntry.CANCEL, userIdOf(user))
@@ -463,7 +493,7 @@ public class AiLangChainController {
         NewChatResponse response;
         try {
             TenantContext.UiAction result = roomBookingService.cancelBooking(
-                    request.hotelId(), user, request.bookingId());
+                    request.hotelId(), user, request.bookingId(), language);
             if (result.data() != null) {
                 step.detail("roomNumber", field(result.data(), "roomNumber"))
                         .detail("checkInDate", field(result.data(), "checkInDate"))
@@ -473,7 +503,7 @@ public class AiLangChainController {
             response = toResponse(step, result);
         } catch (Exception e) {
             log.error("Cancel booking failed for hotelId={}, userId={}", request.hotelId(), userIdOf(user), e);
-            response = failure(step, "Възникна техническа грешка при отказа. Моля, опитайте по-късно.");
+            response = failure(step, translations.message("cancel.failed", language));
         }
         chatLogService.logStep(request.hotelId(), flowId, ChatFlow.CANCEL_BOOKING, ChatFlow.STARTED_BY_BUTTON,
                 ChatFlow.cancelStatus(step.outcome()), step);
@@ -506,6 +536,16 @@ public class AiLangChainController {
             return List.of();
         }
         return roomTypeService.getRoomTypes(hotelId);
+    }
+
+    // Настройките на чата за хотела: езиците и избраният от тях (header Accept-Language; непознат – езикът по подразбиране)
+    @GetMapping("/chat/settings")
+    public ChatSettings getChatSettings(@RequestParam String hotelId,
+                                        @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String language) {
+        if (!hotelRegistry.isKnown(hotelId)) {
+            return new ChatSettings(List.of(), null);
+        }
+        return new ChatSettings(hotelLanguages.of(hotelId).languages(), hotelLanguages.resolve(hotelId, language));
     }
 
     // Без токен (гост) не се връщат бутоните с guest.isActive: false

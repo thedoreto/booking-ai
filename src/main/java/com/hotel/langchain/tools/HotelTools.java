@@ -9,6 +9,7 @@ import com.hotel.langchain.service.HotelBackendClient;
 import com.hotel.langchain.service.HotelBackendClient.HotelBackendException;
 import com.hotel.langchain.service.RoomBookingService;
 import com.hotel.langchain.service.RoomTypeService;
+import com.hotel.langchain.service.TranslationService;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
@@ -27,12 +28,19 @@ public class HotelTools {
     private final HotelBackendClient backendClient;
     private final RoomTypeService roomTypeService;
     private final RoomBookingService roomBookingService;
+    private final TranslationService translations;
 
     public HotelTools(HotelBackendClient backendClient, RoomTypeService roomTypeService,
-                      RoomBookingService roomBookingService) {
+                      RoomBookingService roomBookingService, TranslationService translations) {
         this.backendClient = backendClient;
         this.roomTypeService = roomTypeService;
         this.roomBookingService = roomBookingService;
+        this.translations = translations;
+    }
+
+    // Текстът на езика на заявката (TenantContext) – отива директно в UI (бутон) или при Gemini
+    private String message(String key) {
+        return translations.message(key, TenantContext.getLanguage());
     }
 
     @Tool("Показва на потребителя предстоящите му резервации като картички с бутон „Откажи“. " +
@@ -40,7 +48,8 @@ public class HotelTools {
             "или иска да види списък с резервациите си. Ти НЕ отказваш резервации – потребителят го прави с бутона.")
     public String showMyBookings() {
         // Отговорът отива директно в UI (без второ извикване към Gemini) – виж UiActionShortCircuitChatModel
-        TenantContext.UiAction action = roomBookingService.myBookings(TenantContext.getHotelId(), TenantContext.getUser());
+        TenantContext.UiAction action = roomBookingService.myBookings(TenantContext.getHotelId(), TenantContext.getUser(),
+                TenantContext.getLanguage());
         TenantContext.requestUiAction(action);
         return action.reply();
     }
@@ -52,14 +61,14 @@ public class HotelTools {
         ChatUser user = TenantContext.getUser();
 
         if (user == null) {
-            return "Моля, влезте в профила си, за да проверите вашите резервации.";
+            return message("tools.reservationsLoginRequired");
         }
 
         try {
             Object reservations = backendClient.request(hotelId, "get_reservations", Map.of("token", user.token()));
             return backendClient.toJson(reservations);
         } catch (Exception e) {
-            return toolError("Грешка при зареждане на резервациите: ", e);
+            return toolError("myBookings.error", e);
         }
     }
 
@@ -76,7 +85,7 @@ public class HotelTools {
             Object rooms = backendClient.request(hotelId, "get_all_rooms", Map.of());
             return backendClient.toJson(rooms);
         } catch (Exception e) {
-            return toolError("Грешка при зареждане на стаите: ", e);
+            return toolError("tools.roomsError", e);
         }
     }
 
@@ -86,10 +95,10 @@ public class HotelTools {
         // Типовете идват от booking-system през Kafka (event get_room_types), кеширани в RoomTypeService
         List<RoomTypeService.RoomType> types = roomTypeService.getRoomTypes(TenantContext.getHotelId());
         if (types.isEmpty()) {
-            return "В момента няма информация за типовете стаи. Моля, опитайте отново след малко.";
+            return message("tools.roomTypesUnavailable");
         }
-        return "Типове стаи в хотела: "
-                + types.stream().map(RoomTypeService.RoomType::name).collect(Collectors.joining(", ")) + ".";
+        return translations.message("tools.roomTypes", TenantContext.getLanguage(), Map.of("types",
+                types.stream().map(RoomTypeService.RoomType::name).collect(Collectors.joining(", "))));
     }
 
     @Tool("Показва на потребителя календар за избор на период и след това свободните стаи. " +
@@ -115,7 +124,7 @@ public class HotelTools {
        String type = roomTypeService.normalize(hotelId, roomType);
 
        System.out.println("Date picker prefill: startDate=" + startDate + ", endDate=" + endDate + ", roomType=" + type);
-       throw new OpenDatePickerException(startDate, endDate, type);
+       throw new OpenDatePickerException(startDate, endDate, type, message("chat.datePicker"));
        /*     @dev.langchain4j.agent.tool.P("Начална дата на настаняване във формат YYYY-MM-DD") LocalDate fromDate,
             @dev.langchain4j.agent.tool.P("Крайна дата на напускане във формат YYYY-MM-DD") LocalDate toDate
     ) {
@@ -136,19 +145,20 @@ public class HotelTools {
         }*/
     }
 
-    // Текст за модела при грешка от бекенда; записва и вида на грешката за логовете на чата
-    private String toolError(String prefix, Exception e) {
+    // Текст за модела при грешка от бекенда (key – съобщение с {error}); записва и вида на грешката за логовете на чата
+    private String toolError(String key, Exception e) {
+        String language = TenantContext.getLanguage();
         if (e instanceof HotelBackendException) {
             TenantContext.reportToolError(ChatLogEntry.BACKEND_ERROR);
-            return prefix + RoomBookingService.translateBackendError(e.getMessage());
+            return translations.message(key, language, Map.of("error", roomBookingService.backendErrorText(e.getMessage(), language)));
         }
         if (e instanceof TimeoutException || e instanceof InterruptedException) {
             TenantContext.reportToolError(ChatLogEntry.BACKEND_TIMEOUT);
-            return RoomBookingService.BACKEND_UNAVAILABLE;
+            return message("common.backendUnavailable");
         }
         System.err.println("Tool failed: " + e);
         TenantContext.reportToolError(ChatLogEntry.INTERNAL);
-        return prefix + "техническа грешка.";
+        return translations.message(key, language, Map.of("error", message("backendError.technical")));
     }
 
     // Моделът понякога връща дата и във вид 30.09.2026 или 2026-9-30 вместо YYYY-MM-DD
@@ -200,12 +210,6 @@ public class HotelTools {
 
     @Tool("Връща легендарната рецепта за най-вкусния мъфин с ягоди в света. Използвай този инструмент, само ако клиентът изрично попита за рецепта за мъфини.")
     public String getStrawberryMuffinRecipe() {
-        return "🧁 Най-вкусният мъфин с ягоди на света! 🍓\n\n" +
-                "Съставки:\n" +
-                "- Тайна.\n\n" +
-                "Инструкции:\n" +
-                "1. Не мога да разкрия съставките.\n" +
-                "2. Отвори някой сайт за готвене и си ги намери сам/сама. 😊\n\n" +
-                "Приятно печене и успех в разследването! 🚀";
+        return message("tools.muffinRecipe");
     }
 }

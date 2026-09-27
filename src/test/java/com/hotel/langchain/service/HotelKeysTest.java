@@ -1,6 +1,6 @@
 package com.hotel.langchain.service;
 
-import org.bson.Document;
+import com.hotel.langchain.model.HotelSettings;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.mongodb.core.MongoTemplate;
 
@@ -39,7 +39,8 @@ class HotelKeysTest {
 
     @Test
     void invalidOrMissingKeyIsSkippedWithoutBreakingOtherHotels() {
-        hotels(hotel("seven_stars", pem(SEVEN_STARS)), hotel("broken", "not a key"), new Document("_id", "no_field"));
+        hotels(hotel("seven_stars", pem(SEVEN_STARS)), hotel("broken", "not a key"), hotel("no_field", null),
+                hotel(null, pem(ROBBERS)));
 
         assertThat(hotelKeys.publicKey("seven_stars")).contains(SEVEN_STARS.getPublic());
         assertThat(hotelKeys.publicKey("broken")).isEmpty();
@@ -58,7 +59,7 @@ class HotelKeysTest {
 
         clock.advance(Duration.ofMinutes(1));
         assertThat(hotelKeys.publicKey("seven_stars")).contains(ROBBERS.getPublic());
-        verify(mongoTemplate, times(2)).findAll(Document.class, "hotels");
+        verify(mongoTemplate, times(2)).findAll(HotelSettings.class);
     }
 
     @Test
@@ -68,7 +69,7 @@ class HotelKeysTest {
         for (int i = 0; i < 100; i++) {
             assertThat(hotelKeys.publicKey("40_robbers")).isEmpty();
         }
-        verify(mongoTemplate, times(1)).findAll(Document.class, "hotels");
+        verify(mongoTemplate, times(1)).findAll(HotelSettings.class);
 
         // Добавен ключ се вижда след минута
         hotels(hotel("seven_stars", pem(SEVEN_STARS)), hotel("40_robbers", pem(ROBBERS)));
@@ -81,18 +82,21 @@ class HotelKeysTest {
         hotels(hotel("seven_stars", pem(SEVEN_STARS)));
         hotelKeys.publicKey("seven_stars");
 
-        when(mongoTemplate.findAll(Document.class, "hotels")).thenThrow(new RuntimeException("Atlas down"));
+        when(mongoTemplate.findAll(HotelSettings.class)).thenThrow(new RuntimeException("Atlas down"));
         clock.advance(Duration.ofMinutes(5));
 
         assertThat(hotelKeys.publicKey("seven_stars")).contains(SEVEN_STARS.getPublic());
     }
 
-    private void hotels(Document... hotels) {
-        when(mongoTemplate.findAll(Document.class, "hotels")).thenReturn(List.of(hotels));
+    private void hotels(HotelSettings... hotels) {
+        when(mongoTemplate.findAll(HotelSettings.class)).thenReturn(List.of(hotels));
     }
 
-    private static Document hotel(String hotelId, String publicKey) {
-        return new Document("_id", hotelId).append("jwtPublicKey", publicKey);
+    private static HotelSettings hotel(String hotelId, String publicKey) {
+        HotelSettings hotel = new HotelSettings();
+        hotel.setHotelId(hotelId);
+        hotel.setJwtPublicKey(publicKey);
+        return hotel;
     }
 
     private static String base64(KeyPair keys) {

@@ -25,29 +25,32 @@ public class RoomBookingService {
     public static final String BOOKING_CANCELED_ACTION = "BOOKING_CANCELED";
 
     private static final DateTimeFormatter BG_DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy");
-    public static final String BACKEND_UNAVAILABLE = "Хотелската система не отговаря в момента. Моля, опитайте отново след малко.";
 
     private final HotelBackendClient backendClient;
     private final RoomTypeService roomTypeService;
     private final ChatHistoryService chatHistoryService;
+    private final TranslationService translations;
 
     public RoomBookingService(HotelBackendClient backendClient, RoomTypeService roomTypeService,
-                              ChatHistoryService chatHistoryService) {
+                              ChatHistoryService chatHistoryService, TranslationService translations) {
         this.backendClient = backendClient;
         this.roomTypeService = roomTypeService;
         this.chatHistoryService = chatHistoryService;
+        this.translations = translations;
     }
 
-    public UiAction findAvailableRooms(String hotelId, String startDateStr, String endDateStr, String roomTypeStr) {
+    // language – кодът на езика на отговора (HotelLanguages.resolve); текстовете са в колекция translations
+    public UiAction findAvailableRooms(String hotelId, String startDateStr, String endDateStr, String roomTypeStr,
+                                       String language) {
         LocalDate startDate;
         LocalDate endDate;
         try {
             startDate = LocalDate.parse(startDateStr);
             endDate = LocalDate.parse(endDateStr);
         } catch (DateTimeParseException | NullPointerException e) {
-            return rejected("Невалидни дати. Моля, изберете период от календара.");
+            return rejected(translations.message("rooms.invalidDates", language));
         }
-        String periodError = validatePeriod(startDate, endDate);
+        String periodError = validatePeriod(startDate, endDate, language);
         if (periodError != null) {
             return rejected(periodError);
         }
@@ -62,14 +65,14 @@ public class RoomBookingService {
                 params.put("roomType", roomType);
             }
             Object rooms = backendClient.request(hotelId, "get_available_rooms_by_dates", params);
-            String period = "от " + startDate.format(BG_DATE) + " до " + endDate.format(BG_DATE);
+            String period = period(startDate, endDate, language);
             String what = roomType != null
-                    ? "стаи от тип „" + roomTypeService.nameOf(hotelId, roomType) + "“"
-                    : "стаи";
+                    ? translations.message("rooms.ofType", language, Map.of("type", roomTypeService.nameOf(hotelId, roomType)))
+                    : translations.message("rooms.any", language);
 
             if (!(rooms instanceof List<?> roomList) || roomList.isEmpty()) {
-                return noResult("За периода " + period + " няма свободни " + what + ". Опитайте с други дати"
-                        + (roomType != null ? " или друг тип стая." : "."));
+                return noResult(translations.message(roomType != null ? "rooms.noneAvailableOfType" : "rooms.noneAvailable",
+                        language, Map.of("period", period, "rooms", what)));
             }
             Map<String, Object> data = new HashMap<>();
             data.put("startDate", startDate.toString());
@@ -80,23 +83,24 @@ public class RoomBookingService {
             }
             return new UiAction(
                     SELECT_ROOMS_ACTION,
-                    "Свободни " + what + " за периода " + period + ". Изберете една или повече стаи:",
+                    translations.message("rooms.available", language, Map.of("rooms", what, "period", period)),
                     data);
         } catch (HotelBackendException e) {
-            return backendError("Грешка при търсене на свободни стаи: " + translateBackendError(e.getMessage()));
+            return backendError(translations.message("rooms.searchError", language,
+                    Map.of("error", backendErrorText(e.getMessage(), language))));
         } catch (TimeoutException | InterruptedException e) {
-            return backendTimeout(BACKEND_UNAVAILABLE);
+            return backendTimeout(translations.message("common.backendUnavailable", language));
         }
     }
 
     // user – влезлият потребител; токенът му отива през Kafka и booking-system взима потребителя от него
     public UiAction createBookings(String hotelId, ChatUser user, String startDateStr, String endDateStr,
-                                   List<String> roomIds) {
+                                   List<String> roomIds, String language) {
         if (user == null) {
-            return rejected("Моля, влезте в профила си, за да направите резервация.");
+            return rejected(translations.message("booking.loginRequired", language));
         }
         if (roomIds == null || roomIds.isEmpty()) {
-            return rejected("Моля, изберете поне една стая.");
+            return rejected(translations.message("booking.noRoomSelected", language));
         }
         LocalDate startDate;
         LocalDate endDate;
@@ -104,9 +108,9 @@ public class RoomBookingService {
             startDate = LocalDate.parse(startDateStr);
             endDate = LocalDate.parse(endDateStr);
         } catch (DateTimeParseException | NullPointerException e) {
-            return rejected("Невалидни дати за резервацията.");
+            return rejected(translations.message("booking.invalidDates", language));
         }
-        String periodError = validatePeriod(startDate, endDate);
+        String periodError = validatePeriod(startDate, endDate, language);
         if (periodError != null) {
             return rejected(periodError);
         }
@@ -118,79 +122,86 @@ public class RoomBookingService {
                     "startDate", startDate.toString(),
                     "endDate", endDate.toString()
             ));
-            String reply = confirmationText(bookings, startDate, endDate);
+            String reply = confirmationText(bookings, startDate, endDate, language);
             chatHistoryService.record(hotelId, user, "Резервирай " + roomNumbersText(bookings) + " от "
                     + startDate.format(BG_DATE) + " до " + endDate.format(BG_DATE) + ".", reply);
             return new UiAction(BOOKING_CONFIRMED_ACTION, reply, bookings);
         } catch (HotelBackendException e) {
-            return backendError("Резервацията не беше направена: " + translateBackendError(e.getMessage()));
+            return backendError(translations.message("booking.error", language,
+                    Map.of("error", backendErrorText(e.getMessage(), language))));
         } catch (TimeoutException | InterruptedException e) {
             // Не знаем дали бекендът я е записал – потребителят трябва да провери
-            return backendTimeout("Хотелската система не потвърди резервацията навреме. "
-                    + "Моля, проверете „Моите резервации“, преди да опитате отново.");
+            return backendTimeout(translations.message("booking.timeout", language));
         }
     }
 
     // Предстоящите потвърдени резервации на потребителя – за картичките с бутон „Откажи“
-    public UiAction myBookings(String hotelId, ChatUser user) {
+    public UiAction myBookings(String hotelId, ChatUser user, String language) {
         if (user == null) {
-            return rejected("Моля, влезте в профила си, за да видите вашите резервации.");
+            return rejected(translations.message("myBookings.loginRequired", language));
         }
         try {
             Object bookings = backendClient.request(hotelId, "get_upcoming_bookings", Map.of("token", user.token()));
             if (!(bookings instanceof List<?> list) || list.isEmpty()) {
-                return noResult("Нямате предстоящи резервации.");
+                return noResult(translations.message("myBookings.none", language));
             }
-            return new UiAction(MY_BOOKINGS_ACTION,
-                    "Вашите предстоящи резервации. Резервация може да се откаже най-късно в деня преди настаняването.",
+            return new UiAction(MY_BOOKINGS_ACTION, translations.message("myBookings.list", language),
                     Map.of("bookings", list));
         } catch (HotelBackendException e) {
-            return backendError("Грешка при зареждане на резервациите: " + translateBackendError(e.getMessage()));
+            return backendError(translations.message("myBookings.error", language,
+                    Map.of("error", backendErrorText(e.getMessage(), language))));
         } catch (TimeoutException | InterruptedException e) {
-            return backendTimeout(BACKEND_UNAVAILABLE);
+            return backendTimeout(translations.message("common.backendUnavailable", language));
         }
     }
 
-    public UiAction cancelBooking(String hotelId, ChatUser user, String bookingId) {
+    public UiAction cancelBooking(String hotelId, ChatUser user, String bookingId, String language) {
         if (user == null) {
-            return rejected("Моля, влезте в профила си, за да откажете резервация.");
+            return rejected(translations.message("cancel.loginRequired", language));
         }
         if (bookingId == null || bookingId.isBlank()) {
-            return rejected("Не е избрана резервация.");
+            return rejected(translations.message("cancel.noBookingSelected", language));
         }
         try {
             Object booking = backendClient.request(hotelId, "cancel_booking", Map.of(
                     "token", user.token(),
                     "bookingId", bookingId
             ));
-            String description = describeBooking(hotelId, booking);
-            String reply = "Резервацията " + description + " е отказана.";
+            String description = describeBooking(hotelId, booking, language);
+            String reply = translations.message("cancel.done", language, Map.of("booking", description));
             chatHistoryService.record(hotelId, user, "Откажи резервацията " + description + ".", reply);
             return new UiAction(BOOKING_CANCELED_ACTION, reply, booking);
         } catch (HotelBackendException e) {
-            return backendError("Резервацията не беше отказана: " + translateBackendError(e.getMessage()));
+            return backendError(translations.message("cancel.error", language,
+                    Map.of("error", backendErrorText(e.getMessage(), language))));
         } catch (TimeoutException | InterruptedException e) {
             // Не знаем дали бекендът я е отказал – потребителят трябва да провери
-            return backendTimeout("Хотелската система не потвърди отказа навреме. "
-                    + "Моля, проверете „Моите резервации“, преди да опитате отново.");
+            return backendTimeout(translations.message("cancel.timeout", language));
         }
     }
 
     // „за стая №12 (Двойна стая) от 30.10.2026 до 03.11.2026“
-    private String describeBooking(String hotelId, Object booking) {
+    private String describeBooking(String hotelId, Object booking, String language) {
         if (!(booking instanceof Map<?, ?> map)) {
             return "";
         }
-        StringBuilder text = new StringBuilder("за стая №").append(map.get("roomNumber"));
+        StringBuilder text = new StringBuilder(translations.message("cancel.bookingDescription", language,
+                Map.of("number", String.valueOf(map.get("roomNumber")))));
         if (map.get("roomType") != null) {
             text.append(" (").append(roomTypeService.nameOf(hotelId, String.valueOf(map.get("roomType")))).append(")");
         }
         LocalDate checkIn = parseDateOrNull(map.get("checkInDate"));
         LocalDate checkOut = parseDateOrNull(map.get("checkOutDate"));
         if (checkIn != null && checkOut != null) {
-            text.append(" от ").append(checkIn.format(BG_DATE)).append(" до ").append(checkOut.format(BG_DATE));
+            text.append(" ").append(period(checkIn, checkOut, language));
         }
         return text.toString();
+    }
+
+    // „от 30.10.2026 до 03.11.2026“
+    private String period(LocalDate startDate, LocalDate endDate, String language) {
+        return translations.message("common.period", language,
+                Map.of("start", startDate.format(BG_DATE), "end", endDate.format(BG_DATE)));
     }
 
     private LocalDate parseDateOrNull(Object value) {
@@ -201,31 +212,33 @@ public class RoomBookingService {
         }
     }
 
-    private String validatePeriod(LocalDate startDate, LocalDate endDate) {
+    private String validatePeriod(LocalDate startDate, LocalDate endDate, String language) {
         if (!startDate.isBefore(endDate)) {
-            return "Датата на напускане трябва да е след датата на настаняване.";
+            return translations.message("rooms.checkOutBeforeCheckIn", language);
         }
         if (startDate.isBefore(LocalDate.now())) {
-            return "Датата на настаняване не може да е в миналото.";
+            return translations.message("rooms.checkInInPast", language);
         }
         return null;
     }
 
-    private String confirmationText(Object bookings, LocalDate startDate, LocalDate endDate) {
-        StringBuilder text = new StringBuilder("Резервацията е потвърдена за периода от ")
-                .append(startDate.format(BG_DATE)).append(" до ").append(endDate.format(BG_DATE)).append(":");
+    private String confirmationText(Object bookings, LocalDate startDate, LocalDate endDate, String language) {
+        StringBuilder text = new StringBuilder(translations.message("booking.confirmed", language,
+                Map.of("period", period(startDate, endDate, language))));
         double total = 0;
         if (bookings instanceof List<?> list) {
             for (Object item : list) {
                 if (item instanceof Map<?, ?> booking) {
                     Object price = booking.get("totalPrice");
-                    text.append("\n• Стая №").append(booking.get("roomNumber"))
-                            .append(" – ").append(String.format("%.2f", toDouble(price))).append(" лв.");
+                    text.append("\n").append(translations.message("booking.confirmedRoom", language, Map.of(
+                            "number", String.valueOf(booking.get("roomNumber")),
+                            "price", String.format("%.2f", toDouble(price)))));
                     total += toDouble(price);
                 }
             }
         }
-        return text.append("\nОбща сума: ").append(String.format("%.2f", total)).append(" лв.").toString();
+        return text.append("\n").append(translations.message("booking.total", language,
+                Map.of("total", String.format("%.2f", total)))).toString();
     }
 
     // „стая №12“ или „стаи №12, №15“
@@ -239,22 +252,23 @@ public class RoomBookingService {
         return (numbers.size() == 1 ? "стая " : "стаи ") + String.join(", ", numbers);
     }
 
-    // booking-system връща причините на английски (ResponseStatusException reason)
-    // Съобщенията за грешка от booking-system на български (ползва се и от HotelTools)
-    public static String translateBackendError(String reason) {
-        return switch (reason) {
-            case "Room not available" -> "някоя от избраните стаи вече е заета. Моля, потърсете отново свободни стаи.";
-            case "User not found" -> "потребителят не е намерен.";
-            case "Room not found" -> "стаята не е намерена.";
-            case "Invalid dates" -> "невалиден период.";
-            case "Invalid room type" -> "невалиден тип стая.";
-            case "Booking not found" -> "резервацията не е намерена.";
-            case "Login required", "Invalid token" -> "моля, влезте в профила си.";
-            case "Session expired" -> "сесията ви е изтекла. Моля, влезте отново в профила си.";
-            case "Booking is already canceled" -> "резервацията вече е отказана.";
-            case "Cancellation deadline passed" -> "резервация може да се откаже най-късно в деня преди настаняването.";
-            default -> reason;
+    // booking-system връща причините като кодове на английски (ResponseStatusException reason) –
+    // текстът за потребителя е в translations (ползва се и от HotelTools); непознат код – както е дошъл
+    public String backendErrorText(String reason, String language) {
+        String key = switch (reason == null ? "" : reason) {
+            case "Room not available" -> "backendError.roomNotAvailable";
+            case "User not found" -> "backendError.userNotFound";
+            case "Room not found" -> "backendError.roomNotFound";
+            case "Invalid dates" -> "backendError.invalidDates";
+            case "Invalid room type" -> "backendError.invalidRoomType";
+            case "Booking not found" -> "backendError.bookingNotFound";
+            case "Login required", "Invalid token" -> "backendError.loginRequired";
+            case "Session expired" -> "backendError.sessionExpired";
+            case "Booking is already canceled" -> "backendError.alreadyCanceled";
+            case "Cancellation deadline passed" -> "backendError.cancellationDeadlinePassed";
+            default -> null;
         };
+        return key != null ? translations.message(key, language) : reason;
     }
 
     private double toDouble(Object value) {
