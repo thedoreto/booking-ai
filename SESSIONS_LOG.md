@@ -2,6 +2,84 @@
 
 Планът и идеите за следващи сесии са в `PLAN.md`.
 
+## Сесия 2026-09-27 – проверка на `hotelId`
+
+### Непознат `hotelId` вече не създава колекции
+- **Проблемът:** `hotelId` идва от body-то без проверка; `ChatLogService` пише в `logs_<hotelId>` (+ TTL индекс), т.е. всеки измислен `hotelId` създаваше колекция в Atlas, а заявката стигаше и до Gemini и Kafka (5s timeout).
+- **Решението (вариант А):** нов `HotelRegistry` (`langchain/service`). Хотел е всеки, който има колекция `knowledge_<hotelId>` – нов хотел не иска промяна в кода или настройките. Първо се проверява форматът (`[A-Za-z0-9_-]{1,64}`, без Mongo), после множеството от хотели, заредено от `getCollectionNames()`. Пази се само множеството на съществуващите хотели (паметта не расте от измислени имена); при непознато име се презарежда най-много веднъж в минута. Грешка от Mongo оставя стария списък.
+- **Контролерът:** `/api/chat`, `/rooms/available`, `/bookings`, `/bookings/mine`, `/bookings/cancel` при непознат хотел връщат „Хотелът не е намерен.“ – без лог, Gemini и Kafka; `/api/shortcuts` и `/api/rooms/types` връщат празен списък. Липсващ хотел остава „Липсва хотел.“.
+- **Вариант Б** (списък в настройките) е отхвърлен: всеки нов хотел би искал промяна на env и рестарт.
+- Проверено: `HotelRegistryTest` (5 теста: формат без Mongo, само `knowledge_` прави хотел, 100 непознати имена = 1 заявка към Mongo, нов хотел след минута, грешка от Mongo пази стария списък) и `AiLangChainControllerTest` (3 теста – първите за контролера, с mock-нати услуги: непознат хотел се отказва на всичките 8 адреса без лог, Gemini, Kafka и бутони; липсващ хотел – без да се пита `HotelRegistry`; познат хотел минава). Всички тестове без облак минават (37).
+- Commit: `a5fe786` (booking-ai) – Reject unknown hotelId before logs, Gemini and Kafka.
+
+### Без дефолтен хотел в `TenantContext`
+- **Беше:** без зададен хотел `getHotelId()` тихо връщаше `"knowledge_seven_stars"` – retriever-ът търсеше в `knowledge_knowledge_seven_stars` (празно), а tool-овете пращаха по Kafka несъществуващ хотел (5s timeout). Не се случваше (контролерът винаги задава проверен хотел), но би скрило бъдеща грешка.
+- **Сега (вариант А):** `getHotelId()` хвърля `IllegalStateException("Липсва hotelId в TenantContext")`. Retriever-ът я хваща и връща празен списък; от чата и бутоните стига до контролера → „техническа грешка“ + stack trace в логовете. Вариант Б (`null` + проверка на 6 места) е отхвърлен.
+- `HotelContentRetriever`: махнати подвеждащите коментари за „UI подава директно името на колекцията“.
+- Проверката `hotelId == null || isEmpty()` в `HotelTools.getAllRooms` вече е мъртъв код – оставена е.
+- Префиксите на колекциите са константи `COLLECTION_PREFIX`: `"knowledge_"` в `KnowledgeService` (публична – ползват я и `HotelContentRetriever` и `HotelRegistry`), `"shortcuts_"` в `ShortcutRepository`, `"logs_"` в `ChatLogService`.
+- Проверено: `TenantContextTest` (3 теста) и всички тестове без облак минават (40).
+- Commit: `f39a0b1` (booking-ai) – Remove the default hotelId and name the collection prefixes.
+
+### Лимит на дължината на съобщението в `/api/chat`
+- **Беше:** логовете режат текста до 500 знака, но към Gemini отиваше цялото последно съобщение – дълъг текст изгаря токени от общата квота.
+- **Сега:** `MAX_MESSAGE_LENGTH = ChatLogEntry.MAX_TEXT_LENGTH` (500) в `AiLangChainController`. Обсъдени 300 и 1000: разликата в токени е малка спрямо system prompt-а, паметта и RAG, а 300 би отказвало истински гости с по-дълги въпроси; 500 = дължината в логовете, т.е. всеки приет въпрос се пази цял (полезно за отчета „въпроси без отговор“).
+- По-дълго съобщение → „Съобщението е твърде дълго. Моля, съкратете го до 500 знака.“, без Gemini; лог с `outcome: rejected`, нов `errorType: MESSAGE_TOO_LONG`, `details.length`. Отказ, не отрязване – отрязаният въпрос губи края си.
+- Празно или `null` последно съобщение → „Липсват съобщения.“, без Gemini и без лог (преди отиваше към модела).
+- UI не е пипан (правило 2 – без `maxLength` в полето); размерът на цялото тяло (`messages[]`) остава за „Лимит на заявките“.
+- Проверено: 3 нови теста в `AiLangChainControllerTest` (501 знака – отказ без Gemini, с лог `rejected`; точно 500 – минава; празно – без Gemini и лог); всички тестове без облак минават (43).
+- Commit: `f7698ef` (booking-ai) – Limit chat messages to 500 characters before Gemini.
+
+### Лимит на заявките – стъпка 1: лимит за хотел
+- **Обсъдено:**
+  - Лимит по IP – отхвърлен. В Render истинското IP е в `X-Forwarded-For`, но по думи на служители на Render прокси сървърът не изчиства подадения от клиента header, а само добавя към него, т.е. може да се подправи; не е ясно дали оставаме в Render.
+  - Проверка за човек (Cloudflare Turnstile) със сесии, издадени от booking-ai – отхвърлена като твърде сложна.
+  - Остава по желание „стъпка 2“: Turnstile токен само за текстовите съобщения, без сесии (в `PLAN.md`).
+- **Направено:** `GeminiBudget` (`langchain/service`) – брои текстовите съобщения към Gemini за всеки хотел: на минута (5) и на ден (200), настройки `chat.gemini-limit.per-minute` / `chat.gemini-limit.per-day` (env `CHAT_GEMINILIMIT_PERMINUTE` / `CHAT_GEMINILIMIT_PERDAY`). Денят се сменя в полунощ тихоокеанско време, когато се нулира и дневната квота на Gemini. Отказаните съобщения не се броят. Броячите са в RAM и се нулират при рестарт.
+- Проверката е в `handleChat` след хотела и дължината, точно преди Gemini. Над лимита: „Асистентът е зает в момента. Моля, опитайте отново след минута.“ / „Асистентът не може да отговаря на повече въпроси днес. Моля, опитайте утре или използвайте бутоните.“ В `logs_` – само първият отказ в прозореца (`rejected`, `HOTEL_LIMIT_MINUTE` / `HOTEL_LIMIT_DAY`), за да не пълни скрипт логовете.
+- Бутоните, календарът и резервациите не се броят и не се спират.
+- Числата 5/200 са по подразбиране: публичните данни за безплатния план на `gemini-3.6-flash` се разминават (от ~20 до 1500 на ден), а Google вече не ги публикува в документацията – истинската квота на ключа е в Google AI Studio.
+- Проверено: `GeminiBudgetTest` (4 теста: минутен лимит и нулиране, дневен лимит до полунощ тихоокеанско време, отказаните не се броят, отделни хотели) и 2 нови в `AiLangChainControllerTest` (над лимита – без Gemini, лог само при първия отказ; бутоните не се броят). Всички тестове без облак минават (49).
+- Нов `GEMINI_PROPERTIES.md` – настройките за Gemini (какво правят, стойности по подразбиране, имената в `application.properties` и env в Render) и стойностите, които са в кода.
+- Commit: `26a415e` (booking-ai) – Limit Gemini chat messages per hotel per minute and per day.
+
+### JWT с публичен ключ – подготовка
+- Решено: booking-system подписва JWT с **частен ключ (RS256)**, booking-ai проверява с **публичния ключ на хотела** от Mongo (`HotelAI.hotels`: `{ _id: <hotelId>, jwtPublicKey }`). Отделна двойка ключове за всеки хотел. План в `PLAN.md`.
+- Ново правило 7 в трите `CLAUDE.md`: няма legacy – проектите още не работят с реални хотели, без преходни режими и съвместимост със стари версии.
+- Ключовете (RSA 2048, PEM) са генерирани. booking-system ги чете от файл: `jwt.private-key-location` / `jwt.public-key-location` (env `JWT_PRIVATEKEYLOCATION` / `JWT_PUBLICKEYLOCATION`).
+  - Локално (40_robbers): `booking-system/secrets/` (в `.gitignore`), `file:secrets/40_robbers_*.pem`.
+  - Render (seven_stars): Secret Files → `/etc/secrets/<файл>` (Docker услуга; приложението е root и ги чете).
+- booking-system: `jwt.secret` е закоментиран – приложението не стартира до новия `JwtService`.
+- Commit: `3b8bd25` (booking-system) – `application.properties` вече не е в git (остава само на диска), `secrets/` е в `.gitignore`.
+- Commit: `e4828e1` (booking-ai) – `application.properties` е в `.gitignore` (и досега не беше в git).
+
+### JWT – стъпка 1: booking-system подписва с RS256
+- `JwtService`: чете PEM файловете от `jwt.private-key-location` / `jwt.public-key-location` (Spring `Resource`, `file:...`; приема и PEM, и base64 на един ред), подписва с частния ключ (RS256), проверява с публичния. Claim-овете са същите (`sub` = имейл, `userId`, `role`, 30 мин.). `jwt.secret` е махнат от кода.
+- При старт подписва и проверява пробен токен – ако файловете не са една двойка (напр. публичният е на друг хотел), липсват или са грешни, приложението спира с ясно съобщение.
+- `AuthService`, `JwtFilter`, `GlobalKafkaConsumer`, UI-то и booking-ai не са пипани.
+- Тестове (без облак): нов `JwtServiceTest` (9 – издаден токен се проверява; токен на друг хотел, HS256, неподписан и изтекъл се отказват; четене от PEM и от base64; несъвпадащи ключове и липсващ файл спират старта), `GlobalKafkaConsumerTest` с RSA ключове (`JwtTestKeys`). Всички тестове на booking-system минават (14).
+- Проверено и: локалните `secrets/40_robbers_private.pem` и `40_robbers_public.pem` са валидни RSA 2048, но **не са една двойка** – booking-system няма да стартира с тях, докато публичният не се изведе от частния.
+- Commit: `85ac7ad` (booking-system) – Sign JWTs with the hotel's RSA private key (RS256).
+- booking-system в Render падна след `3b8bd25` с `MongoTimeoutException` (`localhost:27017`): Mongo URI-то досега идваше от закомитнатия `application.properties` (`jwt.secret` и `llm.api.key` бяха `${ENV}`). Добавен `SPRING_DATA_MONGODB_URI` (база `Hotel`; локалният 40_robbers е на `Hotel2`, същият кластер). Env имената с `_` на мястото на тирето (`JWT_PRIVATE_KEY_LOCATION`, `GEMINI_API_BASE_URL`) работят и за `@Value`.
+
+### JWT – стъпка 2: booking-ai проверява токена с ключа на хотела
+- Нов `HotelKeys` (`langchain/service`): публичните ключове от колекция `hotels` в `HotelAI` (`{ _id: <hotelId>, jwtPublicKey: <PEM или base64> }`), кеш в RAM – презарежда на 5 мин., за хотел без ключ най-рано след 1 мин.; невалиден ключ се пропуска с ред в конзолата; при промяна конзолата пише за кои хотели има ключ.
+- Нов `ChatUserResolver` (`langchain/context`): `resolve(hotelId, authorization)` – RS256 с ключа на хотела; невалиден подпис, токен на друг хотел, изтекъл, HS256, неподписан, без `userId`, хотел без ключ → гост.
+- `ChatUser` е само `(id, token)` с проверен `id`; махнати `fromAuthorization`, `readUserId`, `memoryKey`. Контролерът взима потребителя след проверката на хотела (6 места).
+- Паметта на чата е по `hotelId:user:<userId>` – оцелява при нов вход (досега беше по хеш на токена, защото `userId` не беше проверен).
+- Затворени: „`guest.isActive` не е защита“ и `userId` в „Подправяне на логовете“ (остава `flowId`).
+- booking-ai не иска нови env; всеки хотел трябва да има документ в `hotels` с публичния ключ от своята двойка – иначе чатът му има само гости.
+- Тестове: `ChatUserResolverTest` (7), `HotelKeysTest` (5), `AiLangChainControllerTest` (+2: потребителят идва от резолвера за хотела от заявката; неприет токен получава бутоните за гост), `ChatHistoryServiceTest` (+1: паметта оцелява при нов вход); `ChatUserTest` е изтрит. Всички тестове без облак минават (60).
+- В `HotelAI.hotels` и двата хотела бяха със стария публичен ключ (отпечатък `96990cd0d633`, вероятно на seven_stars) – затова в чата на 40_robbers всички бяха гости; верният ключ на 40_robbers е `27f232178aeb`.
+- Commit: `c95ce8b` (booking-ai) – Verify chat users' JWTs with each hotel's public key.
+- Нов `JWT_PROPERTIES.md` – как се правят двата ключа на хотел, къде стоят (локално, Render Secret Files + env, Mongo `hotels`), проверка на двойката, какво става при грешка, смяна на ключовете.
+- `hotels` → `40_robbers` е сменен с верния ключ (`27f232178aeb`, двойка с локалния частен). Render (booking-system и booking-ai за seven_stars) – потвърдено от потребителката, че работи.
+
+### В края на деня
+- Commit-и в кода: booking-ai `a5fe786`, `f39a0b1`, `f7698ef`, `26a415e`, `e4828e1`, `c95ce8b`; booking-system `3b8bd25`, `85ac7ad`. `.md` файловете на трите проекта – отделен commit.
+- Не е прегледан `SELF_LEARNING_IDEAS.md` (беше за днес) – остава за следващата сесия.
+- Отворени от днешните теми: лимит само за гости (вече възможен – измислен `Bearer` е гост); стъпка 2 на лимита (Turnstile) по желание; `flowId` от UI без проверка; ротация на тайните в историята на git (Mongo URI, Gemini ключ, Kafka пароли – Gemini ключът е бил и в чата); сертификатите на Kafka като Render Secret Files; редът `# jwt.secret=...` в локалния `application.properties` на booking-system може да се изтрие.
+
 ## Сесия 2026-09-26 – анонимен гост, архитектурни правила, бутони, JWT, снимки през Kafka
 
 ### Commit-и

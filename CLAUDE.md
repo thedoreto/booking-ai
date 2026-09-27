@@ -11,6 +11,7 @@
 4. **AI асистентът получава данните от бекенда само през Kafka.** Собствената база на booking-ai (`HotelAI`: `knowledge_`, `shortcuts_`, `logs_`) не е бекендът.
 5. **Правило 2 важи само за чата.** Страниците на сайта (Hotel Info, Rooms, Bookings и т.н.) са сайтът на хотела и си говорят директно с booking-system през `api.js` – това е правилно и не се мести в AI асистента.
 6. **Действията в чата имат отделни адреси в booking-ai и така остават:** `/api/chat` (съобщение или бутон по `shortcutId`), `/api/rooms/available` (избрани дати), `/api/bookings` (избрани стаи), `/api/bookings/cancel` (отказ), `/api/shortcuts`, `/api/rooms/types`. Не ги сливай в `/api/chat` – отделните адреси минават без LLM (правило 1).
+7. **Няма legacy.** Проектите още не работят с реални хотели (само тестовите 40_robbers и seven_stars) – не пазим стари данни и стар код: без преходни режими, флагове за съвместимост, миграции и поредност на deploy заради стари версии. Сменя се директно, старото се маха. Спира да важи с първия реален хотел.
 
 ## 2. Технологичен стек
 - Java 17, Spring Boot 3.4.2 (parent), **Maven** (има `mvnw`)
@@ -30,9 +31,13 @@
 - `langchain/service/RoomBookingService` – свободни стаи и създаване на резервации (event `create_booking`); връща `TenantContext.UiAction`
 - `langchain/content/HotelContentRetriever` – RAG retriever, чете `TenantContext`
 - `langchain/context/TenantContext` – ThreadLocal за hotelId и `ChatUser`
-- `langchain/context/ChatUser` – влезлият потребител от header `Authorization: Bearer <JWT>` (без токен – гост). booking-ai **не** проверява подписа: токенът отива през Kafka и booking-system взима потребителя от него. `id` (непроверен) е само за логовете; `memoryKey()` – SHA-256 на токена за паметта на чата
+- `langchain/context/ChatUser` – влезлият потребител: `(id, token)`, `id` е провереният `userId` от JWT-то
+- `langchain/context/ChatUserResolver` – `resolve(hotelId, authorization)`: проверява JWT-то от header `Authorization: Bearer <JWT>` (RS256) с **публичния ключ на хотела**; невалиден подпис, токен на друг хотел, изтекъл, HS256, без `userId` или хотел без ключ → гост (`null`). Контролерът го вика след проверката на хотела. Токенът отива и през Kafka – booking-system го проверява още веднъж
+- `langchain/service/HotelKeys` (как се правят ключовете и къде стоят – `JWT_PROPERTIES.md`) – публичните ключове на хотелите от колекция `hotels` в `HotelAI` (`{ _id: <hotelId>, jwtPublicKey: <PEM или base64> }`); кеш в RAM, презарежда на 5 мин. (за хотел без ключ – най-рано след 1 мин.). Частният ключ е само в booking-system на хотела – booking-ai проверява, но не издава токени
 - `langchain/config` – `AiConfig` (Gemini beans), `LangChainConfig` (ChatMemory), `KafkaCertInitializer`
 - `langchain/service|repository|model` – Shortcuts и `KafkaService` (producer)
+- `langchain/service/HotelRegistry` – кои хотели съществуват: всеки с колекция `knowledge_<hotelId>` и безопасен формат. Контролерът отказва непознат `hotelId` на всички адреси преди логовете, Gemini и Kafka (иначе `logs_<hotelId>` би се създала за всяко измислено име). Списъкът се презарежда от Mongo най-много веднъж в минута
+- `langchain/service/GeminiBudget` (настройките на Gemini, с имената за Render – в `GEMINI_PROPERTIES.md`) – лимит на текстовите съобщения към Gemini за хотел: на минута и на ден (`chat.gemini-limit.per-minute`=5, `chat.gemini-limit.per-day`=200; денят – по тихоокеанско време като квотата на Gemini). Броячите са в RAM. Над лимита – отказ без Gemini, в `logs_` само първият отказ в прозореца (`HOTEL_LIMIT_MINUTE`/`HOTEL_LIMIT_DAY`). Бутоните не се броят
 - `langchain/tools/ShortcutToolRunner` – бутон с `action.type: "tool"` изпълнява tool от `HotelTools` по име (`@Tool` name или името на метода), без Gemini; параметрите са `null`
 - `langchain/log` – структурирани логове за отчетите в `logs_<hotelId>`, по един запис на действие на госта:
   - `ChatFlow` – действие от няколко заявки (`new_booking`: календар → търсене → резервация; `cancel_booking`: списък → откази) е **един документ**, който се допълва (`flowId`, `status`, `steps[]`, `gemini`). `flowId` се връща на UI в `data` и UI го праща обратно със следващата стъпка.
@@ -45,7 +50,7 @@
 ```bash
 ./mvnw clean package -DskipTests   # build (jar в target/)
 ./mvnw test                        # всички тестове; contextLoads изисква реални Mongo/Kafka/Gemini
-./mvnw -o test -Dtest='Chat*Test,Shortcut*Test,KnowledgeRepositoryTest,RoomBookingServiceTest,BoundedChatMemoryStoreTest'   # само тестовете без облак
+./mvnw -o test -Dtest='Chat*Test,Shortcut*Test,KnowledgeRepositoryTest,RoomBookingServiceTest,BoundedChatMemoryStoreTest,HotelRegistryTest,AiLangChainControllerTest,TenantContextTest,GeminiBudgetTest,HotelKeysTest'   # само тестовете без облак
 ./mvnw spring-boot:run             # локално, порт 8081
 docker build -t booking-ai .       # Docker образ (слуша на $PORT, default 8080)
 ```
@@ -53,7 +58,7 @@ docker build -t booking-ai .       # Docker образ (слуша на $PORT, d
 
 ## 5. Конвенции
 - Слоеве: controller → service → repository; конструкторна инжекция (без Lombok в сегашния код).
-- **Multi-tenancy чрез имена на колекции**: `knowledge_<hotelId>`, `shortcuts_<hotelId>`, `logs_<hotelId>`. hotelId идва от request body → `TenantContext` (ThreadLocal), който контролерът чисти във `finally`.
+- **Multi-tenancy чрез имена на колекции**: `knowledge_<hotelId>`, `shortcuts_<hotelId>`, `logs_<hotelId>`. hotelId идва от request body, проверява се с `HotelRegistry` (нов хотел = нова колекция `knowledge_<hotelId>`) → `TenantContext` (ThreadLocal), който контролерът чисти във `finally`.
 - Потребителските съобщения и промптове са на български; отговорите на асистента също.
 - Error handling: контролерът хваща всичко и връща `NewChatResponse(reply, actionType)` с приятелско съобщение – без HTTP error кодове. Грешките се логват предимно с `System.out/err` (не с SLF4J).
 - UI действие: tool записва `TenantContext.UiAction(actionType, reply, data)` (`OpenDatePickerException(start, end)` → `OPEN_DATE_PICKER` с `data` = казаните дати за попълване на календара; `/api/rooms/available` → `SELECT_ROOMS` с `{startDate, endDate, rooms}`). `UiActionShortCircuitChatModel` прескача следващото извикване към Gemini, а контролерът връща `NewChatResponse(reply, actionType, data)`.
@@ -65,10 +70,10 @@ docker build -t booking-ai .       # Docker образ (слуша на $PORT, d
 - **Тайни в `application.properties`** (Mongo URI с парола, Gemini ключ, Kafka пароли) и приватни ключове/keystore в `src/main/resources/certs/` са в git индекса. Не ги печатай/копирай; препоръчително е да се преместят в env променливи и да се ротират.
 - `KafkaCertInitializer` копира сертификатите в `/tmp/certs` при старт; `application.properties` сочи натам (`file:///tmp/certs/...`). Работи само на Linux/Unix-подобна среда и без сертификатите приложението не стартира.
 - Тестът `contextLoads` и стартът изискват достъп до Atlas и Aiven Kafka – няма mock/embedded конфигурация.
-- `Assistant.chat(memoryId, hotelName, ...)` получава `hotelId` като `{hotelName}`. Паметта (`ChatMemoryProvider`, 10 съобщения) е по `hotelId:user:<memoryKey>` за влязъл потребител и `hotelId:guest:<sessionId>` за гост (`sessionId` – UUID от UI в body-то на `/api/chat`; без валиден – памет само за заявката, никога обща). `BoundedChatMemoryStore` пази в RAM най-много 5000 разговора (LRU); при рестарт паметта се губи. Контролерът подава само последното съобщение.
-- `TenantContext.getHotelId()` връща дефолт `"knowledge_seven_stars"`, ако липсва hotelId (а retriever добавя още `knowledge_` префикс → двойно).
+- `Assistant.chat(memoryId, hotelName, ...)` получава `hotelId` като `{hotelName}`. Паметта (`ChatMemoryProvider`, 10 съобщения) е по `hotelId:user:<userId>` за влязъл потребител (оцелява при нов вход) и `hotelId:guest:<sessionId>` за гост (`sessionId` – UUID от UI в body-то на `/api/chat`; без валиден – памет само за заявката, никога обща). `BoundedChatMemoryStore` пази в RAM най-много 5000 разговора (LRU); при рестарт паметта се губи. Контролерът подава само последното съобщение – най-много 500 знака (`MAX_MESSAGE_LENGTH` = `ChatLogEntry.MAX_TEXT_LENGTH`); по-дълго се отказва без Gemini (`MESSAGE_TOO_LONG` в логовете), празно – „Липсват съобщения.“.
+- `TenantContext.getHotelId()` няма дефолт: без зададен хотел хвърля `IllegalStateException`. Tool или retriever, извикан извън заявка от контролера, трябва сам да зададе хотела.
 - `HotelTools.getAvailableRoomsByDates` не търси стаи: винаги хвърля `OpenDatePickerException` с валидните казани дати (минали/невалидни се изпускат); стаите идват после от `/api/rooms/available`. Късен отговор след timeout се игнорира – при `create_booking` резервацията може да е записана, въпреки че потребителят вижда грешка. Има и шеговит tool `getStrawberryMuffinRecipe`.
-- Потребителят идва само от JWT-то в header `Authorization` (не от body-то); проверката е в booking-system. Токенът изтича след 30 мин. – после действията искат нов вход. Резервациите и отказите с бутон минават без LLM, но `ChatHistoryService` ги записва в паметта на разговора.
+- Потребителят идва само от JWT-то в header `Authorization` (не от body-то), проверено с ключа на хотела от `hotels`. **Хотел без документ в `hotels` или с грешен ключ има само гости** (бутоните и въпросите работят, резервация/отказ искат вход); при старт/презареждане конзолата пише за кои хотели има ключ. Токенът изтича след 30 мин. – после потребителят е гост и действията искат нов вход. Резервациите и отказите с бутон минават без LLM, но `ChatHistoryService` ги записва в паметта на разговора.
 - Backend микросервисът, който отговаря на `hotel-requests-topic`, не е в това repo – tools зависят от него (5s timeout).
 - `KnowledgeRepository` е с твърдо кодирани `numCandidates=100`, `limit=5`; Atlas vector индексът трябва да съществува във всяка `knowledge_<hotelId>` колекция.
 - В `Shortcut` анотацията `@Document(collection="shortcuts_#hotelId#")` е само декоративна – реалното име се подава през `MongoTemplate`.
