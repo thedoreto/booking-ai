@@ -39,6 +39,9 @@ public class AiLangChainController {
 
     private static final String NOT_FOUND_REPLY = "Информацията не е намерена.";
     private static final String UNKNOWN_HOTEL_REPLY = "Хотелът не е намерен.";
+    // По-дълго съобщение не стига до Gemini (токени от общата квота). Колкото дължината в логовете –
+    // всеки въпрос, който минава, се записва цял.
+    private static final int MAX_MESSAGE_LENGTH = ChatLogEntry.MAX_TEXT_LENGTH;
 
     private final Assistant assistant;
     private final ShortcutService shortcutService;
@@ -130,8 +133,19 @@ public class AiLangChainController {
     private NewChatResponse handleChat(ChatRequest request, ChatUser user) {
         String hotelId = request.hotelId();
         Message lastMessage = request.messages().get(request.messages().size() - 1);
-        String userText = lastMessage.content();
+        String userText = lastMessage != null ? lastMessage.content() : null;
+        if (!hasText(userText)) {
+            return new NewChatResponse("Липсват съобщения.", null);
+        }
         ChatLogEntry logEntry = ChatLogEntry.start(ChatLogEntry.CHAT, userIdOf(user)).userMessage(userText);
+        if (userText.length() > MAX_MESSAGE_LENGTH) {
+            String reply = "Съобщението е твърде дълго. Моля, съкратете го до " + MAX_MESSAGE_LENGTH + " знака.";
+            logEntry.outcome(ChatLogEntry.REJECTED, ChatLogEntry.MESSAGE_TOO_LONG)
+                    .detail("length", userText.length())
+                    .reply(reply);
+            chatLogService.log(hotelId, logEntry);
+            return new NewChatResponse(reply, null);
+        }
         GeminiUsageTracker.start();
         NewChatResponse response;
 

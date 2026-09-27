@@ -30,9 +30,10 @@ public class ChatLogEntry {
     public static final String BACKEND_TIMEOUT = "BACKEND_TIMEOUT";
     public static final String BACKEND_ERROR = "BACKEND_ERROR";
     public static final String INTERNAL = "INTERNAL";
+    public static final String MESSAGE_TOO_LONG = "MESSAGE_TOO_LONG";
 
     // Текстовете на госта и асистента се пазят съкратени (лични данни)
-    static final int MAX_TEXT_LENGTH = 500;
+    public static final int MAX_TEXT_LENGTH = 500;
 
     private final String type;
     private final Instant timestamp = Instant.now();

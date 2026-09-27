@@ -9,6 +9,8 @@ import com.hotel.langchain.controller.AiLangChainController.ChatRequest;
 import com.hotel.langchain.controller.AiLangChainController.CreateBookingRequest;
 import com.hotel.langchain.controller.AiLangChainController.Message;
 import com.hotel.langchain.controller.AiLangChainController.MyBookingsRequest;
+import com.hotel.langchain.controller.AiLangChainController.NewChatResponse;
+import com.hotel.langchain.log.ChatLogEntry;
 import com.hotel.langchain.log.ChatLogService;
 import com.hotel.langchain.model.Shortcut;
 import com.hotel.langchain.service.HotelRegistry;
@@ -17,6 +19,7 @@ import com.hotel.langchain.service.RoomTypeService;
 import com.hotel.langchain.service.ShortcutService;
 import com.hotel.langchain.tools.ShortcutToolRunner;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.List;
 
@@ -29,7 +32,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-// Непознат hotelId се отказва на всеки адрес, преди логовете (logs_<hotelId>), Gemini и Kafka
+// Проверките на входа: непознат hotelId се отказва на всеки адрес, преди логовете (logs_<hotelId>), Gemini и Kafka;
+// твърде дълго или празно съобщение не стига до Gemini
 class AiLangChainControllerTest {
 
     private static final String KNOWN = "seven_stars";
@@ -99,8 +103,39 @@ class AiLangChainControllerTest {
         verify(chatLogService).logStep(eq(KNOWN), anyString(), anyString(), anyString(), anyString(), any());
     }
 
+    @Test
+    void tooLongMessageIsRejectedWithoutGemini() {
+        NewChatResponse response = controller.chat(chatRequest(KNOWN, null, "а".repeat(501)), null);
+
+        assertThat(response.reply()).isEqualTo("Съобщението е твърде дълго. Моля, съкратете го до 500 знака.");
+        verifyNoInteractions(assistant);
+        ArgumentCaptor<ChatLogEntry> logEntry = ArgumentCaptor.forClass(ChatLogEntry.class);
+        verify(chatLogService).log(eq(KNOWN), logEntry.capture());
+        assertThat(logEntry.getValue().outcome()).isEqualTo(ChatLogEntry.REJECTED);
+    }
+
+    @Test
+    void messageAtTheLimitGoesToGemini() {
+        String text = "а".repeat(500);
+        when(assistant.chat(any(), any(), any(), any(), any(), eq(text))).thenReturn("Отговор");
+
+        assertThat(controller.chat(chatRequest(KNOWN, null, text), null).reply()).isEqualTo("Отговор");
+    }
+
+    @Test
+    void emptyMessageDoesNotGoToGemini() {
+        assertThat(controller.chat(chatRequest(KNOWN, null, "  "), null).reply()).isEqualTo("Липсват съобщения.");
+        assertThat(controller.chat(chatRequest(KNOWN, null, null), null).reply()).isEqualTo("Липсват съобщения.");
+
+        verifyNoInteractions(assistant, chatLogService);
+    }
+
     private static ChatRequest chatRequest(String hotelId, String shortcutId) {
-        return new ChatRequest(hotelId, List.of(new Message("user", "Има ли паркинг?")), shortcutId, null, null);
+        return chatRequest(hotelId, shortcutId, "Има ли паркинг?");
+    }
+
+    private static ChatRequest chatRequest(String hotelId, String shortcutId, String text) {
+        return new ChatRequest(hotelId, List.of(new Message("user", text)), shortcutId, null, null);
     }
 
     private void verifyNothingElseCalled() {
