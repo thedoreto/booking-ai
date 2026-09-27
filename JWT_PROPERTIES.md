@@ -5,7 +5,7 @@
 ## Как работи
 - Всеки хотел има **своя двойка RSA ключове**.
 - **booking-system** на хотела подписва токена при вход с **частния** ключ (RS256) и го проверява с **публичния**.
-- **booking-ai** има само **публичния** ключ на всеки хотел (Mongo `HotelAI.hotels`). Може да проверява токените, но не и да ги издава.
+- **booking-ai** има само **публичния** ключ на всеки хотел (Mongo `HotelAI.hotel_settings`). Може да проверява токените, но не и да ги издава.
 - Токен от един хотел не минава в чата на друг хотел.
 - **Частният ключ е единствената тайна.** Който го има, може да влезе като всеки потребител на хотела. Публичният ключ не е тайна.
 
@@ -30,7 +30,7 @@ openssl pkey -in seven_stars_private.pem -pubout -out seven_stars_public.pem
 |---|---|---|
 | частен | booking-system на **този** хотел | файл + настройка `jwt.private-key-location` |
 | публичен | booking-system на **този** хотел | файл + настройка `jwt.public-key-location` |
-| публичен | booking-ai – Mongo `HotelAI.hotels` | документ `{ "_id": "<hotelId>", "jwtPublicKey": "<съдържанието на публичния .pem>" }` |
+| публичен | booking-ai – Mongo `HotelAI.hotel_settings` | документ `{ "hotelId": "<hotelId>", "jwtPublicKey": "<съдържанието на публичния .pem>" }` |
 
 ### booking-system – настройки
 
@@ -57,12 +57,12 @@ Env името може да е и без `_` на мястото на тире�
   - `JWT_PUBLIC_KEY_LOCATION` = `file:/etc/secrets/seven_stars_public.pem`
 
 ### booking-ai – Mongo
-- База **`HotelAI`** (тази от `spring.data.mongodb.uri` на booking-ai), колекция **`hotels`**, по един документ на хотел:
+- База **`HotelAI`** (тази от `spring.data.mongodb.uri` на booking-ai), колекция **`hotel_settings`**, по един документ на хотел:
   ```json
-  { "_id": "40_robbers",  "jwtPublicKey": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----" }
-  { "_id": "seven_stars", "jwtPublicKey": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----" }
+  { "hotelId": "40_robbers",  "jwtPublicKey": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----" }
+  { "hotelId": "seven_stars", "jwtPublicKey": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----" }
   ```
-- `_id` е hotelId-то като текст (същото, което UI праща). `jwtPublicKey` може да е целият PEM или само base64 на един ред.
+- `_id` се генерира от Mongo; `hotelId` е същото, което UI праща. В документа има и други настройки на хотела (езиците на чата). `jwtPublicKey` може да е целият PEM или само base64 на един ред.
 - booking-ai **не иска env** за JWT. Нов или сменен ключ се вижда до 5 минути, без рестарт.
 
 ## 3. Проверка, че ключовете са една двойка
@@ -71,7 +71,7 @@ Env името може да е и без `_` на мястото на тире�
 openssl pkey -in seven_stars_private.pem -pubout -outform DER | sha256sum
 openssl pkey -pubin -in seven_stars_public.pem -outform DER | sha256sum
 ```
-Същият отпечатък трябва да има и ключът в `hotels` за този хотел.
+Същият отпечатък трябва да има и ключът в `hotel_settings` за този хотел.
 
 ## 4. Какво става при грешка
 | Грешка | booking-system | booking-ai (чатът) |
@@ -79,14 +79,14 @@ openssl pkey -pubin -in seven_stars_public.pem -outform DER | sha256sum
 | Файлът липсва / грешен път / без `file:` | не стартира: `Cannot read JWT key file` | – |
 | Файлът не е RSA PEM | не стартира: `Invalid JWT private/public key` | – |
 | Частният и публичният не са двойка | не стартира: `JWT private and public keys are not a pair` | – |
-| Няма документ в `hotels` или ключът там не е от двойката | работи | **всички в чата на хотела са гости** – бутоните и въпросите работят, резервация/отказ/„Моите резервации“ искат вход |
+| Няма документ в `hotel_settings` или ключът там не е от двойката | работи | **всички в чата на хотела са гости** – бутоните и въпросите работят, резервация/отказ/„Моите резервации“ искат вход |
 
 В конзолата на booking-ai при зареждане: `JWT public keys loaded for hotels: [...]` – за кои хотели има прочетен ключ.
 
 ## 5. Смяна на ключовете на хотел
 1. Нова двойка (стъпка 1).
 2. booking-system: сменя двата файла (локално в `secrets/`, в Render – Secret Files) и се рестартира.
-3. booking-ai: сменя `jwtPublicKey` в `hotels`.
+3. booking-ai: сменя `jwtPublicKey` в `hotel_settings`.
 4. Всички влезли потребители на хотела трябва да влязат наново (старите токени вече не минават).
 
 Старият частен ключ се изтрива навсякъде.

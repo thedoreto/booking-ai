@@ -31,6 +31,16 @@
     - [ ] **Чужд хотел** – с друг `hotelId` гостът чете знанията и стаите на друг хотел. Сега данните са публични; да се има предвид, ако в знанията влезе нещо, което не е за всички.
   - [x] **Отделна памет за всеки гост** (2026-09-26): `sessionId` от UI, `hotelId:guest:<sessionId>`, `BoundedChatMemoryStore` (най-много 5000 разговора).
 - [ ] **Входна точка за нова резервация** (обсъдено 2026-09-26): един tool отваря календара и сам слага типовете стаи в отговора (без отделна заявка `/api/rooms/types` от UI); следващите стъпки са на отделните адреси без LLM. По желание да се преименува `getAvailableRoomsByDates` (вече не търси стаи). Ако трябва подменю с типове – общо „меню с избор“ (`CHOOSE`), което AI асистентът праща; `ShortcutToolRunner` трябва да може да подава параметри.
+- [ ] **Езици на чата** (започнато 2026-09-27): менюто с езици в хедъра на чата; **UI не знае кои езици има** – списъкът и текстовете идват от booking-ai, нов език = данни в Mongo, не промяна в кода.
+  - [x] Езиците на хотела в `hotel_settings` (`languages`, `defaultLanguage`; модел `HotelSettings`, `HotelLanguages`); `GET /api/chat/settings` (добавен в правило 6); UI праща избрания език като `Accept-Language` на всички адреси на чата – 2026-09-27.
+  - [x] Gemini отговаря на избрания език (`{language}` в system prompt-а, същото едно извикване); знанията за RAG остават на български – 2026-09-27.
+  - [x] Текстовете на асистента (62) и на прозореца в UI (`ui.*`, 34) – в обща колекция `translations` (`{ key, texts: { bg, en } }`, `{име}` за данните), `TranslationService`; `/api/chat/settings` връща `texts` за прозореца – 2026-09-27.
+  - [x] Бутоните: `label: { bg, en }` в самия бутон; `/api/shortcuts` връща `{ shortcutId, label, category }` на избрания език – 2026-09-27. **Преди deploy:** заявката (Aggregations + `$merge`), която прави `label` на обект, се пуска заедно с новия booking-ai – иначе бутоните не се показват.
+  - [x] Типовете стаи от бекенда – превеждат се по текст от `translations` – 2026-09-27.
+  - [ ] **`translations_<hotelId>`** – преводи на хотела с предимство пред общите. План: `TRANSLATIONS_HOTEL_PLAN.md` (**следващата сесия започва оттук** – първо да се одобри планът).
+  - [ ] Знанията по бутон – превод в документа в `knowledge_<hotelId>`; без превод с Gemini.
+  - [ ] Езикът – и в логовете.
+  - [ ] **Валутата да е настройка на хотела** (решено 2026-09-27): сега „лв.“/„BGN“ е вътре в текстовете (`booking.confirmedRoom`, `booking.total`, `ui.pricePerNight`, `ui.bookButton`, `ui.price`); да стане `{currency}` от `hotel_settings`, а форматът на сумата – по езика.
 - [ ] **Тестове** – в трите проекта. На 2026-09-26: booking-ai – unit тестове без облак за `log`, бутоните, `ChatUser`, `RoomBookingService`, `KnowledgeRepository`; booking-system – първите (`GlobalKafkaConsumerTest`, `HotelServiceImagesTest`); booking-ui – Vitest за снимките (4). Освен тях booking-ai има само `contextLoads`, който иска истински Mongo, Kafka и Gemini. Unit тестове за услугите (`RoomBookingService`, `RoomTypeService`, `HotelService` – наличност, отказ, нощувки) + вариантът без облак отдолу (embedded Kafka + fake чат модел).
 
 ## Архитектурни правила (в `CLAUDE.md`)

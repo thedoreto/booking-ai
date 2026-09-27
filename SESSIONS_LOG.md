@@ -2,6 +2,38 @@
 
 Планът и идеите за следващи сесии са в `PLAN.md`.
 
+## Сесия 2026-09-27 (2) – езици на чата
+
+### Данни в Mongo (`HotelAI`)
+- `hotels` → **`hotel_settings`**: `{ _id: <ObjectId>, hotelId, jwtPublicKey, languages: [{ code, name }], defaultLanguage }`; `HotelKeys` и новият `HotelLanguages` четат през модела `HotelSettings`. Старата `hotels` може да се изтрие след deploy на новия booking-ai.
+- Нова обща **`translations`** (`{ _id, key?, texts: { bg, en } }`): 62 текста на асистента, 34 `ui.*` за прозореца на UI, 3 типа стаи (без `key`, търсят се по текст). Справка: `translations.json` в booking-ai (не е в git, `.git/info/exclude`).
+- `shortcuts_<hotelId>`: `label` става `{ bg, en }` – заявката (Aggregations + `$merge`) се пуска **заедно с deploy-а** на новия booking-ai, иначе бутоните не се показват.
+
+### booking-ai
+- `GET /api/chat/settings` → `{ languages, language, texts }` (нов адрес, добавен в правило 6 в трите `CLAUDE.md`).
+- Всички адреси на чата четат `Accept-Language` → `HotelLanguages.resolve` (непознат език – езикът по подразбиране на хотела).
+- Gemini: `{language}` в system prompt-а (името на езика), едно извикване; езикът е в `TenantContext`.
+- `TranslationService` (`message` по ключ с `{име}`, `translate` по текст, `messagesWithPrefix("ui.")`); контролерът, `RoomBookingService` и `HotelTools` нямат текстове за потребителя в кода. Остават на български: записите в паметта на Gemini, system prompt-ът и описанията на tools.
+- `/api/shortcuts` връща само `{ shortcutId, label, category }` с етикета на избрания език; `/api/rooms/types` превежда имената на типовете.
+- Commit-и: `53c338b` (езици, `hotel_settings`, `translations`), `8249c90` (бутони, типове стаи, `ui.*`).
+
+### booking-ui
+- Меню с езици в хедъра (само при повече от един език); изборът в `localStorage.chatLanguage` → `Accept-Language` в `aiApi.js`.
+- Всички текстове на прозореца – `t("ui.…")` от `/api/chat/settings` (`chatTexts.js`); резервни – 7 на български, ако booking-ai не отговаря. Календарът зарежда локала на dayjs за езика при нужда.
+- Commit-и: `ed9cc19` (менюто), `3db9883` (текстовете).
+
+### Върнато
+- `translations_<hotelId>` – първият опит (`hotelId` като нов параметър на всяко извикване на `TranslationService`) е върнат с `git restore`: твърде голяма промяна, направена без предварителен план. Новият план – `TRANSLATIONS_HOTEL_PLAN.md`, чака одобрение.
+- Ново правило (в паметта): при голяма промяна – първо точен план (файлове, сигнатури, подход) и одобрение, после код.
+
+### Проверено
+- booking-ai: всички тестове без облак минават (`HotelLanguagesTest`, `TranslationServiceTest`, `TestTranslations` за ключовете в тестовете). Jar-ът не се сглобява офлайн – `maven-jar-plugin`/`maven-clean-plugin` липсват в локалния кеш (и без промените).
+- booking-ui: Vitest (9), `npm run build`; ESLint – само двете стари грешки.
+
+### Следващата сесия
+- Започва с `TRANSLATIONS_HOTEL_PLAN.md` – първо одобрение на плана.
+- Не е прегледан `SELF_LEARNING_IDEAS.md` – след задачата за езиците.
+
 ## Сесия 2026-09-27 – проверка на `hotelId`
 
 ### Непознат `hotelId` вече не създава колекции
