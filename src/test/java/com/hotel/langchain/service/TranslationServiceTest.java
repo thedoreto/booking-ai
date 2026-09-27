@@ -47,6 +47,17 @@ class TranslationServiceTest {
     }
 
     @Test
+    void messagesWithPrefixGiveTheUiTextsInTheLanguage() {
+        translations(translation("ui.send", Map.of("bg", "Изпрати", "en", "Send")),
+                translation("ui.cancel", Map.of("bg", "Отказ")),
+                translation("booking.error", Map.of("bg", "Грешка", "en", "Error")),
+                translation(null, Map.of("bg", "Апартамент", "en", "Apartment")));
+
+        assertThat(translations.messagesWithPrefix("ui.", "en"))
+                .isEqualTo(Map.of("ui.send", "Send", "ui.cancel", "Отказ"));
+    }
+
+    @Test
     void translateFindsTheTextInAnyLanguage() {
         translations(translation(null, Map.of("bg", "Единична стая", "en", "Single room", "de", "Einzelzimmer")));
 

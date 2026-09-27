@@ -6,18 +6,20 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.Field;
 import java.util.List;
+import java.util.Map;
 
 // Бутон в чата – само препратка: action казва към какво сочи (знание или tool).
 // В Mongo (shortcuts_<hotelId>):
-//   { shortcutId, label, category, isActive, action: { type: "knowledge", knowledgeIds: [...] } }
-//   { shortcutId, label, category, isActive, action: { type: "tool", tool: "showMyBookings" } }
+//   { shortcutId, label: { bg: "Паркинг", en: "Parking" }, category, isActive, action: { type: "knowledge", knowledgeIds: [...] } }
+//   { shortcutId, label: { bg: "Моите резервации", en: "My bookings" }, category, isActive, action: { type: "tool", tool: "showMyBookings" } }
 @Document(collection = "shortcuts_#hotelId#") // Динамично мапване или без анотация, ако ползваш MongoTemplate с изрично име
 public class Shortcut {
 
     @Id
     private String id;
     private String shortcutId;
-    private String label;
+    // Код на език → етикет
+    private Map<String, String> label;
     private String category;
     // Липсващо поле = активен бутон
     @Field("isActive")
@@ -59,8 +61,23 @@ public class Shortcut {
     public void setId(String id) { this.id = id; }
     public String getShortcutId() { return shortcutId; }
     public void setShortcutId(String shortcutId) { this.shortcutId = shortcutId; }
-    public String getLabel() { return label; }
-    public void setLabel(String label) { this.label = label; }
+    public Map<String, String> getLabel() { return label; }
+    public void setLabel(Map<String, String> label) { this.label = label; }
+
+    // Етикетът на езика, иначе на fallbackLanguage (езика по подразбиране на хотела), иначе който и да е; null – без етикет
+    public String labelIn(String language, String fallbackLanguage) {
+        if (label == null || label.isEmpty()) {
+            return null;
+        }
+        String text = language != null ? label.get(language) : null;
+        if (text == null || text.isBlank()) {
+            text = fallbackLanguage != null ? label.get(fallbackLanguage) : null;
+        }
+        if (text == null || text.isBlank()) {
+            text = label.values().stream().filter(value -> value != null && !value.isBlank()).findFirst().orElse(null);
+        }
+        return text;
+    }
     public String getCategory() { return category; }
     public void setCategory(String category) { this.category = category; }
 

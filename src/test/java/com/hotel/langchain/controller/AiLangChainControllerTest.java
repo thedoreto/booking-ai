@@ -13,6 +13,7 @@ import com.hotel.langchain.controller.AiLangChainController.CreateBookingRequest
 import com.hotel.langchain.controller.AiLangChainController.Message;
 import com.hotel.langchain.controller.AiLangChainController.MyBookingsRequest;
 import com.hotel.langchain.controller.AiLangChainController.NewChatResponse;
+import com.hotel.langchain.controller.AiLangChainController.ShortcutButton;
 import com.hotel.langchain.log.ChatLogEntry;
 import com.hotel.langchain.log.ChatLogService;
 import com.hotel.langchain.model.Shortcut;
@@ -28,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -66,6 +68,8 @@ class AiLangChainControllerTest {
     {
         when(hotelRegistry.isKnown(KNOWN)).thenReturn(true);
         when(geminiBudget.tryAcquire(KNOWN)).thenReturn(new GeminiBudget.Result(null, false));
+        when(hotelLanguages.of(KNOWN)).thenReturn(new HotelLanguages.Languages(
+                List.of(new HotelLanguages.Language("bg", "Български"), new HotelLanguages.Language("en", "English")), "bg"));
     }
 
     @Test
@@ -82,9 +86,9 @@ class AiLangChainControllerTest {
                 .isEqualTo(UNKNOWN_HOTEL_REPLY);
         assertThat(controller.cancelBooking(new CancelBookingRequest(UNKNOWN, "b-1", null), "Bearer t", null).reply())
                 .isEqualTo(UNKNOWN_HOTEL_REPLY);
-        assertThat(controller.getShortcuts(UNKNOWN, null)).isEmpty();
-        assertThat(controller.getRoomTypes(UNKNOWN)).isEmpty();
-        assertThat(controller.getChatSettings(UNKNOWN, "en")).isEqualTo(new ChatSettings(List.of(), null));
+        assertThat(controller.getShortcuts(UNKNOWN, null, null)).isEmpty();
+        assertThat(controller.getRoomTypes(UNKNOWN, null)).isEmpty();
+        assertThat(controller.getChatSettings(UNKNOWN, "en")).isEqualTo(new ChatSettings(List.of(), null, Map.of()));
 
         verifyNothingElseCalled();
     }
@@ -103,13 +107,16 @@ class AiLangChainControllerTest {
     @Test
     void knownHotelGoesThrough() {
         Shortcut button = new Shortcut();
+        button.setShortcutId("parking");
+        button.setLabel(Map.of("bg", "Паркинг"));
         when(shortcutService.getShortcutsForHotel(KNOWN, true)).thenReturn(List.of(button));
         when(roomTypeService.getRoomTypes(KNOWN)).thenReturn(List.of(new RoomTypeService.RoomType("DOUBLE", "Двойна")));
         when(roomBookingService.cancelBooking(eq(KNOWN), any(), eq("b-1"), any()))
                 .thenReturn(new UiAction("BOOKING_CANCELLED", "Резервацията е отказана.", null));
 
-        assertThat(controller.getShortcuts(KNOWN, null)).containsExactly(button);
-        assertThat(controller.getRoomTypes(KNOWN)).hasSize(1);
+        assertThat(controller.getShortcuts(KNOWN, null, null)).containsExactly(new ShortcutButton("parking", "Паркинг", null));
+        when(hotelLanguages.resolve(KNOWN, "en")).thenReturn("en");
+        assertThat(controller.getRoomTypes(KNOWN, "en")).containsExactly(new RoomTypeService.RoomType("DOUBLE", "[en] Двойна"));
         assertThat(controller.cancelBooking(new CancelBookingRequest(KNOWN, "b-1", null), "Bearer t", null).reply())
                 .isEqualTo("Резервацията е отказана.");
 
@@ -123,7 +130,7 @@ class AiLangChainControllerTest {
         when(hotelLanguages.of(KNOWN)).thenReturn(new HotelLanguages.Languages(languages, "bg"));
         when(hotelLanguages.resolve(KNOWN, "en")).thenReturn("en");
 
-        assertThat(controller.getChatSettings(KNOWN, "en")).isEqualTo(new ChatSettings(languages, "en"));
+        assertThat(controller.getChatSettings(KNOWN, "en")).isEqualTo(new ChatSettings(languages, "en", Map.of()));
     }
 
     @Test
@@ -206,9 +213,24 @@ class AiLangChainControllerTest {
     }
 
     @Test
+    void buttonLabelIsInTheChosenLanguageOrTheHotelDefault() {
+        Shortcut translated = new Shortcut();
+        translated.setShortcutId("parking");
+        translated.setLabel(Map.of("bg", "Паркинг", "en", "Parking"));
+        Shortcut bulgarianOnly = new Shortcut();
+        bulgarianOnly.setShortcutId("access");
+        bulgarianOnly.setLabel(Map.of("bg", "Достъп"));
+        when(shortcutService.getShortcutsForHotel(KNOWN, true)).thenReturn(List.of(translated, bulgarianOnly));
+        when(hotelLanguages.resolve(KNOWN, "en")).thenReturn("en");
+
+        assertThat(controller.getShortcuts(KNOWN, null, "en")).extracting(ShortcutButton::label)
+                .containsExactly("Parking", "Достъп");
+    }
+
+    @Test
     void unverifiedTokenGetsTheGuestButtons() {
         // Резолверът не е приел токена (подправен, изтекъл, друг хотел) – бутоните са като за гост
-        controller.getShortcuts(KNOWN, "Bearer forged");
+        controller.getShortcuts(KNOWN, "Bearer forged", null);
 
         verify(shortcutService).getShortcutsForHotel(KNOWN, true);
     }

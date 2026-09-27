@@ -7,7 +7,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-// TranslationService за тестовете: вместо текста връща ключа, а с параметри – „ключ {име=стойност}“.
+// TranslationService за тестовете: вместо текста връща ключа, а с параметри – „ключ {име=стойност}“;
+// translate – „[език] текст“.
 // Така тестът проверява кое съобщение е избрано, без да зависи от записите в Mongo.
 public final class TestTranslations {
 
@@ -22,6 +23,8 @@ public final class TestTranslations {
             String key = call.getArgument(0);
             return params.isEmpty() ? key : key + " " + params;
         });
+        when(translations.translate(any(), any())).thenAnswer(call ->
+                call.getArgument(0) == null ? null : "[" + call.getArgument(1) + "] " + call.getArgument(0));
         return translations;
     }
 }

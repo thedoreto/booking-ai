@@ -113,8 +113,12 @@ public class AiLangChainController {
 
     public record CancelBookingRequest(String hotelId, String bookingId, String flowId) {}
 
-    // languages – за менюто с езици в чата (в този ред); language – езикът, на който отговаряме
-    public record ChatSettings(List<HotelLanguages.Language> languages, String language) {}
+    // Бутон в чата, както го вижда UI: етикетът на избрания език; какво прави бутонът, UI не знае (action остава в booking-ai)
+    public record ShortcutButton(String shortcutId, String label, String category) {}
+
+    // languages – за менюто с езици в чата (в този ред); language – езикът, на който отговаряме;
+    // texts – текстовете на прозореца на чата на този език (ключове ui.* от translations)
+    public record ChatSettings(List<HotelLanguages.Language> languages, String language, Map<String, String> texts) {}
 
     @PostMapping("/chat")
     public NewChatResponse chat(@RequestBody ChatRequest request,
@@ -350,12 +354,14 @@ public class AiLangChainController {
             logEntry.outcome(ChatLogEntry.NO_RESULT, null);
             return new NewChatResponse(text("chat.notFound"), null);
         }
+        // В логовете – на езика по подразбиране, за да са отчетите еднакви независимо от езика на госта
+        String label = shortcut.labelIn(null, hotelLanguages.of(hotelId).defaultLanguage());
         Shortcut.Action action = shortcut.getAction();
         if (action == null) {
-            logEntry.detail("label", shortcut.getLabel()).outcome(ChatLogEntry.NO_RESULT, null);
+            logEntry.detail("label", label).outcome(ChatLogEntry.NO_RESULT, null);
             return new NewChatResponse(text("chat.notFound"), null);
         }
-        logEntry.detail("label", shortcut.getLabel())
+        logEntry.detail("label", label)
                 .detail("actionType", action.getType())
                 .detail("tool", action.getTool());
 
@@ -529,13 +535,18 @@ public class AiLangChainController {
         return value instanceof Number n ? n.doubleValue() : 0;
     }
 
-    // Типовете стаи на хотела ({code, name}) – за избора в UI; идват от booking-system
+    // Типовете стаи на хотела ({code, name}) – за избора в UI; идват от booking-system, името – преведено
+    // на езика от Accept-Language (translations), без превод – както е дошло
     @GetMapping("/rooms/types")
-    public List<RoomTypeService.RoomType> getRoomTypes(@RequestParam String hotelId) {
+    public List<RoomTypeService.RoomType> getRoomTypes(@RequestParam String hotelId,
+                                                       @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage) {
         if (!hotelRegistry.isKnown(hotelId)) {
             return List.of();
         }
-        return roomTypeService.getRoomTypes(hotelId);
+        String language = hotelLanguages.resolve(hotelId, acceptLanguage);
+        return roomTypeService.getRoomTypes(hotelId).stream()
+                .map(type -> new RoomTypeService.RoomType(type.code(), translations.translate(type.name(), language)))
+                .toList();
     }
 
     // Настройките на чата за хотела: езиците и избраният от тях (header Accept-Language; непознат – езикът по подразбиране)
@@ -543,17 +554,28 @@ public class AiLangChainController {
     public ChatSettings getChatSettings(@RequestParam String hotelId,
                                         @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String language) {
         if (!hotelRegistry.isKnown(hotelId)) {
-            return new ChatSettings(List.of(), null);
+            return new ChatSettings(List.of(), null, Map.of());
         }
-        return new ChatSettings(hotelLanguages.of(hotelId).languages(), hotelLanguages.resolve(hotelId, language));
+        String resolved = hotelLanguages.resolve(hotelId, language);
+        return new ChatSettings(hotelLanguages.of(hotelId).languages(), resolved,
+                translations.messagesWithPrefix("ui.", resolved));
     }
 
-    // Без токен (гост) не се връщат бутоните с guest.isActive: false
+    // Без токен (гост) не се връщат бутоните с guest.isActive: false. Етикетът – на езика от Accept-Language,
+    // без превод – на езика по подразбиране на хотела
     @GetMapping("/shortcuts")
-    public List<Shortcut> getShortcuts(@RequestParam String hotelId, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+    public List<ShortcutButton> getShortcuts(@RequestParam String hotelId,
+                                             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                             @RequestHeader(value = HttpHeaders.ACCEPT_LANGUAGE, required = false) String acceptLanguage) {
         if (!hotelRegistry.isKnown(hotelId)) {
             return List.of();
         }
-        return shortcutService.getShortcutsForHotel(hotelId, chatUserResolver.resolve(hotelId, authorization) == null);
+        String language = hotelLanguages.resolve(hotelId, acceptLanguage);
+        String defaultLanguage = hotelLanguages.of(hotelId).defaultLanguage();
+        return shortcutService.getShortcutsForHotel(hotelId, chatUserResolver.resolve(hotelId, authorization) == null)
+                .stream()
+                .map(shortcut -> new ShortcutButton(shortcut.getShortcutId(),
+                        shortcut.labelIn(language, defaultLanguage), shortcut.getCategory()))
+                .toList();
     }
 }

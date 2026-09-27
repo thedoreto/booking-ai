@@ -67,7 +67,7 @@ public class RoomBookingService {
             Object rooms = backendClient.request(hotelId, "get_available_rooms_by_dates", params);
             String period = period(startDate, endDate, language);
             String what = roomType != null
-                    ? translations.message("rooms.ofType", language, Map.of("type", roomTypeService.nameOf(hotelId, roomType)))
+                    ? translations.message("rooms.ofType", language, Map.of("type", roomTypeName(hotelId, roomType, language)))
                     : translations.message("rooms.any", language);
 
             if (!(rooms instanceof List<?> roomList) || roomList.isEmpty()) {
@@ -188,7 +188,7 @@ public class RoomBookingService {
         StringBuilder text = new StringBuilder(translations.message("cancel.bookingDescription", language,
                 Map.of("number", String.valueOf(map.get("roomNumber")))));
         if (map.get("roomType") != null) {
-            text.append(" (").append(roomTypeService.nameOf(hotelId, String.valueOf(map.get("roomType")))).append(")");
+            text.append(" (").append(roomTypeName(hotelId, String.valueOf(map.get("roomType")), language)).append(")");
         }
         LocalDate checkIn = parseDateOrNull(map.get("checkInDate"));
         LocalDate checkOut = parseDateOrNull(map.get("checkOutDate"));
@@ -196,6 +196,11 @@ public class RoomBookingService {
             text.append(" ").append(period(checkIn, checkOut, language));
         }
         return text.toString();
+    }
+
+    // Името на типа стая от бекенда на хотела, преведено на езика (translations); без превод – както е дошло
+    private String roomTypeName(String hotelId, String code, String language) {
+        return translations.translate(roomTypeService.nameOf(hotelId, code), language);
     }
 
     // „от 30.10.2026 до 03.11.2026“

@@ -59,6 +59,21 @@ public class TranslationService {
         return message(key, language, Map.of());
     }
 
+    // Всички съобщения с ключ, започващ с prefix (напр. "ui." – текстовете на прозореца на чата), на езика
+    // (иначе на FALLBACK_LANGUAGE); {име} остават за UI
+    public Map<String, String> messagesWithPrefix(String prefix, String language) {
+        Map<String, String> result = new HashMap<>();
+        current().byKey().forEach((key, texts) -> {
+            if (key.startsWith(prefix)) {
+                String text = texts.getOrDefault(language == null ? FALLBACK_LANGUAGE : language, texts.get(FALLBACK_LANGUAGE));
+                if (text != null) {
+                    result.put(key, text);
+                }
+            }
+        });
+        return result;
+    }
+
     // Текстът на езика, ако някой запис го съдържа на който и да е език; иначе – текстът, както е дошъл
     public String translate(String text, String language) {
         if (text == null) {
