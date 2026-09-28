@@ -12,6 +12,7 @@ import org.springframework.data.mongodb.core.query.Update;
 import com.mongodb.client.result.DeleteResult;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -109,6 +110,21 @@ class KnowledgeRepositoryTest {
         ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
         verify(mongoTemplate, times(2)).remove(query.capture(), eq("knowledge_40_robbers"));
         assertThat(query.getValue().getQueryObject()).containsEntry("_id", id);
+    }
+
+    @Test
+    void translationsAreSetOneByOneWithoutTouchingOtherLanguages() {
+        ObjectId id = new ObjectId();
+
+        repository.setTranslations("40_robbers", id, Map.of("en", "Parking is free."));
+
+        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
+        ArgumentCaptor<Update> update = ArgumentCaptor.forClass(Update.class);
+        verify(mongoTemplate).findAndModify(query.capture(), update.capture(), any(FindAndModifyOptions.class),
+                eq(KnowledgeDocument.class), eq("knowledge_40_robbers"));
+        assertThat(query.getValue().getQueryObject()).containsEntry("_id", id);
+        Document set = (Document) update.getValue().getUpdateObject().get("$set");
+        assertThat(set).containsOnly(Map.entry("translations.en", "Parking is free."));
     }
 
     @Test

@@ -7,6 +7,8 @@ import org.bson.types.ObjectId;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Optional;
@@ -48,8 +50,9 @@ public class KnowledgeService {
         this.embeddingModel = embeddingModel;
     }
 
-    // Бутон със знание: текстовете на избраните документи от knowledge_<hotelId>, в реда на ids
-    public List<String> textsByIds(String hotelId, List<ObjectId> ids) {
+    // Бутон със знание: текстовете на избраните документи от knowledge_<hotelId>, в реда на ids –
+    // преводът на езика на чата, ако го има, иначе основният текст
+    public List<String> textsByIds(String hotelId, List<ObjectId> ids, String language) {
         if (ids == null || ids.isEmpty()) {
             return List.of();
         }
@@ -59,7 +62,7 @@ public class KnowledgeService {
         }
         // Документ без text се пропуска
         return knowledgeRepo.findByIds(hotelId, validIds).stream()
-                .map(KnowledgeDocument::getText)
+                .map(d -> textIn(d, language))
                 .filter(text -> text != null && !text.isBlank())
                 .toList();
     }
@@ -67,6 +70,33 @@ public class KnowledgeService {
     // Всички знания на хотела (админ панел), без embedding
     public List<KnowledgeDocument> findAll(String hotelId) {
         return knowledgeRepo.findAll(hotelId);
+    }
+
+    // Един документ (без embedding); празно – невалиден id или няма такъв
+    public Optional<KnowledgeDocument> findById(String hotelId, String id) {
+        ObjectId objectId = toObjectId(id);
+        return objectId == null ? Optional.empty() : knowledgeRepo.findByIds(hotelId, List.of(objectId)).stream().findFirst();
+    }
+
+    // Записва преводите (код на език → текст) – всеки задължителен и до MAX_TEXT_LENGTH; другите езици остават.
+    // Кои езици са позволени, решава викащият (езиците на хотела). Празно – невалиден id или няма такъв документ.
+    public Optional<KnowledgeDocument> setTranslations(String hotelId, String id, Map<String, String> translations) {
+        Map<String, String> clean = new LinkedHashMap<>();
+        translations.forEach((language, text) -> clean.put(language, validText(text)));
+        ObjectId objectId = toObjectId(id);
+        if (objectId == null) {
+            return Optional.empty();
+        }
+        Optional<KnowledgeDocument> updated = knowledgeRepo.setTranslations(hotelId, objectId, clean);
+        updated.ifPresent(d -> System.out.println("Knowledge translations saved: hotelId=" + hotelId + ", id=" + id
+                + ", languages=" + clean.keySet()));
+        return updated;
+    }
+
+    private static String textIn(KnowledgeDocument document, String language) {
+        String translation = language != null && document.getTranslations() != null
+                ? document.getTranslations().get(language) : null;
+        return translation != null && !translation.isBlank() ? translation : document.getText();
     }
 
     // Промяна от админ панела. Нов embedding (Gemini) – само ако текстът е друг; ако Gemini не отговори, нищо не се записва.
@@ -110,7 +140,11 @@ public class KnowledgeService {
     }
 
     private static String validText(KnowledgeChanges changes) {
-        String text = trimToNull(changes.text());
+        return validText(changes.text());
+    }
+
+    private static String validText(String value) {
+        String text = trimToNull(value);
         if (text == null) {
             throw new InvalidKnowledgeException("TEXT_REQUIRED");
         }

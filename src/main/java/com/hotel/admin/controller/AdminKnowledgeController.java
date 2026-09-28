@@ -10,6 +10,7 @@ import com.hotel.knowledge.model.KnowledgeDocument;
 import com.hotel.knowledge.service.KnowledgeService.EmbeddingFailedException;
 import com.hotel.knowledge.service.KnowledgeService.InvalidKnowledgeException;
 import com.hotel.knowledge.service.KnowledgeService.KnowledgeChanges;
+import com.hotel.knowledge.service.KnowledgeTranslator.TranslationFailedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -28,13 +29,19 @@ import java.util.function.Supplier;
 
 // Знанията на хотела на влезлия админ (knowledge_<hotelId>): преглед, добавяне, редакция, изтриване.
 // usedBy – бутоните, които ползват знанието; такова знание не се трие (409 IN_USE).
-// Грешки: 400 TEXT_REQUIRED / TEXT_TOO_LONG, 404 NOT_FOUND, 409 IN_USE, 503 EMBEDDING_FAILED (нищо не е записано).
+// translations – преводите за бутоните (/translations/{език}: предложение от Gemini без запис, запис на един език;
+// /translate-all – всички езици с Gemini). Грешки: 400 TEXT_REQUIRED / TEXT_TOO_LONG / UNKNOWN_LANGUAGE / NO_LANGUAGES,
+// 404 NOT_FOUND, 409 IN_USE, 503 EMBEDDING_FAILED / TRANSLATION_FAILED (нищо не е записано).
 @RestController
 @RequestMapping("/api/admin/knowledge")
 public class AdminKnowledgeController {
 
     public record KnowledgeItem(String id, String title, String category, List<String> tags, String source, String text,
-                                List<ShortcutRef> usedBy) {}
+                                Map<String, String> translations, List<ShortcutRef> usedBy) {}
+
+    public record TranslationRequest(String text) {}
+
+    public record TranslationSuggestion(String language, String text) {}
 
     private final AdminKnowledgeService adminKnowledgeService;
 
@@ -64,6 +71,30 @@ public class AdminKnowledgeController {
                 .orElseGet(AdminKnowledgeController::notFound));
     }
 
+    @PostMapping("/{id}/translations/{language}/suggest")
+    public ResponseEntity<?> suggestTranslation(@RequestAttribute(AdminAuthInterceptor.ADMIN) Admin admin,
+                                                @PathVariable String id, @PathVariable String language) {
+        return handle(() -> adminKnowledgeService.suggestTranslation(admin.hotelId(), id, language)
+                .<ResponseEntity<?>>map(text -> ResponseEntity.ok(new TranslationSuggestion(language, text)))
+                .orElseGet(AdminKnowledgeController::notFound));
+    }
+
+    @PutMapping("/{id}/translations/{language}")
+    public ResponseEntity<?> saveTranslation(@RequestAttribute(AdminAuthInterceptor.ADMIN) Admin admin,
+                                             @PathVariable String id, @PathVariable String language,
+                                             @RequestBody TranslationRequest request) {
+        return handle(() -> adminKnowledgeService.saveTranslation(admin.hotelId(), id, language, request.text())
+                .<ResponseEntity<?>>map(k -> ResponseEntity.ok(toItem(k)))
+                .orElseGet(AdminKnowledgeController::notFound));
+    }
+
+    @PostMapping("/{id}/translate-all")
+    public ResponseEntity<?> translateAll(@RequestAttribute(AdminAuthInterceptor.ADMIN) Admin admin, @PathVariable String id) {
+        return handle(() -> adminKnowledgeService.translateAll(admin.hotelId(), id)
+                .<ResponseEntity<?>>map(k -> ResponseEntity.ok(toItem(k)))
+                .orElseGet(AdminKnowledgeController::notFound));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@RequestAttribute(AdminAuthInterceptor.ADMIN) Admin admin, @PathVariable String id) {
         try {
@@ -80,6 +111,9 @@ public class AdminKnowledgeController {
             return error(HttpStatus.BAD_REQUEST, e.getCode());
         } catch (EmbeddingFailedException e) {
             return error(HttpStatus.SERVICE_UNAVAILABLE, "EMBEDDING_FAILED");
+        } catch (TranslationFailedException e) {
+            System.err.println("Knowledge translation failed: " + e.getMessage());
+            return error(HttpStatus.SERVICE_UNAVAILABLE, "TRANSLATION_FAILED");
         }
     }
 
@@ -93,6 +127,7 @@ public class AdminKnowledgeController {
 
     private static KnowledgeItem toItem(KnowledgeWithUsage k) {
         KnowledgeDocument d = k.document();
-        return new KnowledgeItem(d.getId(), d.getTitle(), d.getCategory(), d.getTags(), d.getSource(), d.getText(), k.usedBy());
+        return new KnowledgeItem(d.getId(), d.getTitle(), d.getCategory(), d.getTags(), d.getSource(), d.getText(),
+                d.getTranslations() != null ? d.getTranslations() : Map.of(), k.usedBy());
     }
 }

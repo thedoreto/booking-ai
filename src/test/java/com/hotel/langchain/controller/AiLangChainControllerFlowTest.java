@@ -82,7 +82,7 @@ class AiLangChainControllerFlowTest {
     void knowledgeButtonAnswersWithTheTextsWithoutGemini() {
         List<ObjectId> ids = List.of(new ObjectId(), new ObjectId());
         button("parking", knowledge(ids));
-        when(knowledgeService.textsByIds(HOTEL, ids)).thenReturn(List.of("Паркингът е безплатен.", "Има и зарядна станция."));
+        when(knowledgeService.textsByIds(eq(HOTEL), eq(ids), any())).thenReturn(List.of("Паркингът е безплатен.", "Има и зарядна станция."));
 
         NewChatResponse response = controller.chat(button(HOTEL, "parking", null), null, null);
 
@@ -99,7 +99,7 @@ class AiLangChainControllerFlowTest {
         hidden.setGuest(guest);
         button("empty", null);
         button("no_texts", knowledge(List.of(new ObjectId())));
-        when(knowledgeService.textsByIds(eq(HOTEL), any())).thenReturn(List.of());
+        when(knowledgeService.textsByIds(eq(HOTEL), any(), any())).thenReturn(List.of());
 
         // Скритият от госта бутон не се изпълнява и при директна заявка
         assertThat(controller.chat(button(HOTEL, "staff", null), null, null).reply()).isEqualTo("chat.notFound");

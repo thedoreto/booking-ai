@@ -6,7 +6,9 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import java.util.*;
 
 // Едно знание за хотела. В Mongo (knowledge_<hotelId> – името на колекцията се подава от KnowledgeRepository):
-//   { _id: <ObjectId>, text, title, category, tags: [...], source, embedding: [...], metadata: {...} }
+//   { _id: <ObjectId>, text, title, category, tags: [...], source, embedding: [...], metadata: {...},
+//     translations: { en: "...", de: "..." } }
+// text е на езика по подразбиране на хотела – от него са embedding-ът и RAG; translations – само за бутоните (без LLM).
 @Document
 public class KnowledgeDocument {
 
@@ -19,6 +21,8 @@ public class KnowledgeDocument {
     private String source;
     private List<Double> embedding;
     private Map<String, Object> metadata;
+    // Код на език → преводът на text (без езика по подразбиране)
+    private Map<String, String> translations;
 
     public KnowledgeDocument() {
         // REQUIRED by Spring Data Mongo
@@ -40,4 +44,6 @@ public class KnowledgeDocument {
     public void setCategory(String category) { this.category = category; }
     public void setTags(List<String> tags) { this.tags = tags; }
     public void setSource(String source) { this.source = source; }
+    public Map<String, String> getTranslations() { return translations; }
+    public void setTranslations(Map<String, String> translations) { this.translations = translations; }
 }

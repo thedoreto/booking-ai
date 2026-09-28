@@ -388,8 +388,9 @@ public class AiLangChainController {
             return new NewChatResponse(toolReply.get(), null);
         }
 
-        // Бутон със знание – текстовете на документите директно от knowledge_<hotelId>, без vector search
-        List<String> texts = knowledgeService.textsByIds(hotelId, action.getKnowledgeIds());
+        // Бутон със знание – текстовете на документите директно от knowledge_<hotelId>, без vector search,
+        // на езика на чата, ако има превод
+        List<String> texts = knowledgeService.textsByIds(hotelId, action.getKnowledgeIds(), TenantContext.getLanguage());
         if (!texts.isEmpty()) {
             return new NewChatResponse(String.join("\n\n", texts), null);
         }

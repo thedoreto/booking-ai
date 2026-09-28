@@ -77,3 +77,30 @@ export function createKnowledge(token, changes) {
 export function deleteKnowledge(token, id) {
   return request(`/knowledge/${encodeURIComponent(id)}`, { ...authorized(token), method: 'DELETE' })
 }
+
+// Езиците на хотела: { languages: [{ code, name }], defaultLanguage }
+export function settings(token) {
+  return request('/settings', authorized(token))
+}
+
+// Предложение за превод на един език от Gemini – не се записва: { language, text }
+export function suggestTranslation(token, id, language) {
+  return request(`/knowledge/${encodeURIComponent(id)}/translations/${encodeURIComponent(language)}/suggest`, {
+    ...authorized(token),
+    method: 'POST',
+  })
+}
+
+// Записва превода на един език → документът
+export function saveTranslation(token, id, language, text) {
+  return request(`/knowledge/${encodeURIComponent(id)}/translations/${encodeURIComponent(language)}`, {
+    ...authorized(token),
+    method: 'PUT',
+    body: JSON.stringify({ text }),
+  })
+}
+
+// Gemini превежда основния текст на всички езици на хотела и ги записва → документът
+export function translateAll(token, id) {
+  return request(`/knowledge/${encodeURIComponent(id)}/translate-all`, { ...authorized(token), method: 'POST' })
+}

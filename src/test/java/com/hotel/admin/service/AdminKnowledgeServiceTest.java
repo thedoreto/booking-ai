@@ -5,9 +5,12 @@ import com.hotel.admin.service.AdminKnowledgeService.KnowledgeWithUsage;
 import com.hotel.admin.service.AdminKnowledgeService.ShortcutRef;
 import com.hotel.knowledge.model.KnowledgeDocument;
 import com.hotel.knowledge.service.KnowledgeService;
+import com.hotel.knowledge.service.KnowledgeService.InvalidKnowledgeException;
+import com.hotel.knowledge.service.KnowledgeTranslator;
 import com.hotel.langchain.model.Shortcut;
 import com.hotel.langchain.repository.ShortcutRepository;
 import com.hotel.langchain.service.HotelLanguages;
+import com.hotel.langchain.service.HotelLanguages.Language;
 import com.hotel.langchain.service.HotelLanguages.Languages;
 import org.bson.types.ObjectId;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,10 +19,14 @@ import org.junit.jupiter.api.Test;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -34,11 +41,18 @@ class AdminKnowledgeServiceTest {
     private final KnowledgeService knowledgeService = mock(KnowledgeService.class);
     private final ShortcutRepository shortcutRepository = mock(ShortcutRepository.class);
     private final HotelLanguages hotelLanguages = mock(HotelLanguages.class);
-    private final AdminKnowledgeService service = new AdminKnowledgeService(knowledgeService, shortcutRepository, hotelLanguages);
+    private final KnowledgeTranslator translator = mock(KnowledgeTranslator.class);
+    private final AdminKnowledgeService service =
+            new AdminKnowledgeService(knowledgeService, shortcutRepository, hotelLanguages, translator);
+
+    private static final Language BG = new Language("bg", "Български");
+    private static final Language EN = new Language("en", "English");
+    private static final Language DE = new Language("de", "Deutsch");
 
     @BeforeEach
     void buttons() {
-        when(hotelLanguages.of("40_robbers")).thenReturn(new Languages(List.of(), "en"));
+        when(hotelLanguages.of("40_robbers")).thenReturn(new Languages(List.of(BG, EN, DE), "en"));
+        when(hotelLanguages.nameOf("40_robbers", "en")).thenReturn("English");
         Shortcut inactive = shortcut("info", Map.of("bg", "Информация", "en", "Info"), PARKING, BREAKFAST);
         inactive.setIsActive(false);
         when(shortcutRepository.findKnowledgeShortcuts("40_robbers")).thenReturn(List.of(
@@ -81,6 +95,57 @@ class AdminKnowledgeServiceTest {
         when(knowledgeService.create("40_robbers", changes)).thenReturn(doc(new ObjectId()));
 
         assertThat(service.create("40_robbers", changes).usedBy()).isEmpty();
+    }
+
+    @Test
+    void suggestionIsForOneLanguageAndIsNotSaved() {
+        when(knowledgeService.findById("40_robbers", PARKING.toHexString())).thenReturn(Optional.of(doc(PARKING)));
+        when(translator.translate("Текст", "English", List.of(DE))).thenReturn(Map.of("de", "Text auf Deutsch"));
+
+        assertThat(service.suggestTranslation("40_robbers", PARKING.toHexString(), "de")).contains("Text auf Deutsch");
+        verify(knowledgeService, never()).setTranslations(anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    void onlyTheHotelsLanguagesWithoutTheDefaultOneCanBeTranslated() {
+        for (String language : List.of("en", "fr", "")) {
+            assertThatThrownBy(() -> service.saveTranslation("40_robbers", PARKING.toHexString(), language, "Text"))
+                    .isInstanceOfSatisfying(InvalidKnowledgeException.class, e -> assertThat(e.getCode()).isEqualTo("UNKNOWN_LANGUAGE"));
+            assertThatThrownBy(() -> service.suggestTranslation("40_robbers", PARKING.toHexString(), language))
+                    .isInstanceOf(InvalidKnowledgeException.class);
+        }
+        verify(translator, never()).translate(anyString(), anyString(), any());
+        verify(knowledgeService, never()).setTranslations(anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    void savingOneLanguageSendsOnlyThatLanguage() {
+        when(knowledgeService.setTranslations("40_robbers", PARKING.toHexString(), Map.of("bg", "Паркинг")))
+                .thenReturn(Optional.of(doc(PARKING)));
+
+        assertThat(service.saveTranslation("40_robbers", PARKING.toHexString(), "bg", "Паркинг")).isPresent();
+    }
+
+    @Test
+    void translateAllUsesEveryLanguageExceptTheDefaultOneAndSavesThem() {
+        when(knowledgeService.findById("40_robbers", PARKING.toHexString())).thenReturn(Optional.of(doc(PARKING)));
+        Map<String, String> translations = Map.of("bg", "Текст", "de", "Text");
+        when(translator.translate("Текст", "English", List.of(BG, DE))).thenReturn(translations);
+        when(knowledgeService.setTranslations("40_robbers", PARKING.toHexString(), translations)).thenReturn(Optional.of(doc(PARKING)));
+
+        assertThat(service.translateAll("40_robbers", PARKING.toHexString())).isPresent();
+        verify(knowledgeService).setTranslations("40_robbers", PARKING.toHexString(), translations);
+    }
+
+    @Test
+    void translateAllWithoutOtherLanguagesOrDocument() {
+        when(hotelLanguages.of("one_language")).thenReturn(new Languages(List.of(BG), "bg"));
+        assertThatThrownBy(() -> service.translateAll("one_language", PARKING.toHexString()))
+                .isInstanceOfSatisfying(InvalidKnowledgeException.class, e -> assertThat(e.getCode()).isEqualTo("NO_LANGUAGES"));
+
+        when(knowledgeService.findById(eq("40_robbers"), anyString())).thenReturn(Optional.empty());
+        assertThat(service.translateAll("40_robbers", UNUSED.toHexString())).isEmpty();
+        verify(translator, never()).translate(anyString(), anyString(), any());
     }
 
     private static Shortcut shortcut(String shortcutId, Map<String, String> label, ObjectId... knowledgeIds) {

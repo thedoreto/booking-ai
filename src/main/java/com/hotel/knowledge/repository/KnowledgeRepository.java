@@ -71,6 +71,16 @@ public class KnowledgeRepository {
         return mongoTemplate.remove(new Query(Criteria.where("_id").is(id)), collection(hotelId)).getDeletedCount() > 0;
     }
 
+    // Записва преводите (код на език → текст); другите езици остават. Връща новия документ без embedding.
+    public Optional<KnowledgeDocument> setTranslations(String hotelId, ObjectId id, Map<String, String> translations) {
+        Update update = new Update();
+        translations.forEach((language, text) -> update.set("translations." + language, text));
+        Query query = new Query(Criteria.where("_id").is(id));
+        query.fields().exclude("embedding");
+        return Optional.ofNullable(mongoTemplate.findAndModify(query, update, FindAndModifyOptions.options().returnNew(true),
+                KnowledgeDocument.class, collection(hotelId)));
+    }
+
     // Сменя title, category, tags, source и text на документа (празно/null – полето се маха); embedding – само ако не е null.
     // Останалото в документа (metadata…) не се пипа. Връща новия документ без embedding; празно – няма такъв документ.
     public Optional<KnowledgeDocument> update(String hotelId, ObjectId id, KnowledgeDocument changes, List<Double> embedding) {

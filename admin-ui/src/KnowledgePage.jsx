@@ -3,8 +3,9 @@ import {
   Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Dialog,
   DialogActions, DialogContent, DialogContentText, DialogTitle, InputAdornment, TextField, Tooltip, Typography,
 } from '@mui/material'
-import { deleteKnowledge, getToken, knowledge } from './api.js'
+import { deleteKnowledge, getToken, knowledge, settings } from './api.js'
 import KnowledgeEditor from './KnowledgeEditor.jsx'
+import TranslationsSection from './TranslationsSection.jsx'
 
 const NO_CATEGORY = 'Без категория'
 
@@ -15,10 +16,15 @@ export default function KnowledgePage({ onUnauthorized }) {
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
   const [adding, setAdding] = useState(false)
+  // Езиците за преводите – на хотела, без основния (text е на него)
+  const [translationLanguages, setTranslationLanguages] = useState([])
 
   useEffect(() => {
-    knowledge(getToken())
-      .then(setDocuments)
+    Promise.all([knowledge(getToken()), settings(getToken())])
+      .then(([docs, hotel]) => {
+        setTranslationLanguages(hotel.languages.filter((l) => l.code !== hotel.defaultLanguage))
+        setDocuments(docs)
+      })
       .catch((e) => {
         if (e.code === 'UNAUTHORIZED') {
           onUnauthorized()
@@ -104,8 +110,9 @@ export default function KnowledgePage({ onUnauthorized }) {
             {category} ({docs.length})
           </Typography>
           {docs.map((doc) => (
-            <KnowledgeItem key={doc.id} doc={doc} categories={categories} allTags={allTags} onSaved={handleSaved}
-              onDeleted={handleDeleted} onUnauthorized={onUnauthorized} />
+            <KnowledgeItem key={doc.id} doc={doc} categories={categories} allTags={allTags}
+              translationLanguages={translationLanguages} onSaved={handleSaved} onDeleted={handleDeleted}
+              onUnauthorized={onUnauthorized} />
           ))}
         </Box>
       ))}
@@ -113,10 +120,11 @@ export default function KnowledgePage({ onUnauthorized }) {
   )
 }
 
-function KnowledgeItem({ doc, categories, allTags, onSaved, onDeleted, onUnauthorized }) {
+function KnowledgeItem({ doc, categories, allTags, translationLanguages, onSaved, onDeleted, onUnauthorized }) {
   const [editing, setEditing] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const usedBy = doc.usedBy || []
+  const missing = translationLanguages.filter((l) => !doc.translations?.[l.code])
 
   return (
     <Accordion disableGutters>
@@ -125,6 +133,9 @@ function KnowledgeItem({ doc, categories, allTags, onSaved, onDeleted, onUnautho
           <Typography sx={{ fontWeight: 500 }}>{doc.title || preview(doc.text)}</Typography>
           {(doc.tags || []).map((tag) => (
             <Chip key={tag} label={tag} size="small" variant="outlined" />
+          ))}
+          {missing.map((l) => (
+            <Chip key={l.code} label={`без ${l.code.toUpperCase()}`} size="small" color="warning" variant="outlined" />
           ))}
           {usedBy.length > 0 && (
             <Chip label={`бутони: ${usedBy.length}`} size="small" color="primary" variant="outlined" />
@@ -170,6 +181,9 @@ function KnowledgeItem({ doc, categories, allTags, onSaved, onDeleted, onUnautho
                 </Button>
               </Box>
             </Box>
+            {translationLanguages.length > 0 && (
+              <TranslationsSection doc={doc} languages={translationLanguages} onSaved={onSaved} onUnauthorized={onUnauthorized} />
+            )}
             <DeleteDialog
               open={confirming}
               doc={doc}

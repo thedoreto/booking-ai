@@ -2,6 +2,7 @@ package com.hotel.admin.config;
 
 import com.hotel.admin.controller.AdminAuthController;
 import com.hotel.admin.controller.AdminKnowledgeController;
+import com.hotel.admin.controller.AdminSettingsController;
 import com.hotel.admin.service.AdminAuthService;
 import com.hotel.admin.service.AdminAuthService.Admin;
 import com.hotel.admin.service.AdminAuthService.LoginResult;
@@ -14,6 +15,10 @@ import com.hotel.config.CorsConfig;
 import com.hotel.knowledge.model.KnowledgeDocument;
 import com.hotel.knowledge.service.KnowledgeService.EmbeddingFailedException;
 import com.hotel.knowledge.service.KnowledgeService.InvalidKnowledgeException;
+import com.hotel.knowledge.service.KnowledgeTranslator.TranslationFailedException;
+import com.hotel.langchain.service.HotelLanguages;
+import com.hotel.langchain.service.HotelLanguages.Language;
+import com.hotel.langchain.service.HotelLanguages.Languages;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +34,7 @@ import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -59,7 +65,7 @@ class AdminWebConfigTest {
     @Configuration
     @EnableWebMvc
     @Import({CorsConfig.class, AdminWebConfig.class, AdminAuthInterceptor.class, AdminAuthController.class,
-            AdminKnowledgeController.class})
+            AdminKnowledgeController.class, AdminSettingsController.class})
     static class WebConfig {
         @Bean
         AdminAuthService adminAuthService() {
@@ -70,17 +76,24 @@ class AdminWebConfigTest {
         AdminKnowledgeService adminKnowledgeService() {
             return mock(AdminKnowledgeService.class);
         }
+
+        @Bean
+        HotelLanguages hotelLanguages() {
+            return mock(HotelLanguages.class);
+        }
     }
 
     @Autowired
     private AdminAuthService adminAuthService;
     @Autowired
     private AdminKnowledgeService knowledge;
+    @Autowired
+    private HotelLanguages hotelLanguages;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp(WebApplicationContext context) {
-        reset(adminAuthService, knowledge);
+        reset(adminAuthService, knowledge, hotelLanguages);
         when(adminAuthService.verify(any())).thenReturn(Optional.empty());
         when(adminAuthService.verify("good")).thenReturn(Optional.of(ADMIN));
         mvc = MockMvcBuilders.webAppContextSetup(context).build();
@@ -190,6 +203,50 @@ class AdminWebConfigTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("IN_USE"))
                 .andExpect(jsonPath("$.usedBy[0].label").value("Паркинг"));
+    }
+
+    @Test
+    void settingsAreTheLanguagesOfTheHotelFromTheToken() throws Exception {
+        when(hotelLanguages.of("40_robbers")).thenReturn(new Languages(
+                List.of(new Language("bg", "Български"), new Language("en", "English")), "bg"));
+
+        mvc.perform(authorized(get("/api/admin/settings")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.defaultLanguage").value("bg"))
+                .andExpect(jsonPath("$.languages[1].code").value("en"));
+        mvc.perform(get("/api/admin/settings")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void translationEndpoints() throws Exception {
+        KnowledgeDocument translated = document();
+        translated.setTranslations(Map.of("en", "Parking is free."));
+        when(knowledge.suggestTranslation("40_robbers", ID, "en")).thenReturn(Optional.of("Parking is free."));
+        when(knowledge.saveTranslation("40_robbers", ID, "en", "Parking is free."))
+                .thenReturn(Optional.of(new KnowledgeWithUsage(translated, List.of())));
+        when(knowledge.translateAll("40_robbers", ID)).thenReturn(Optional.of(new KnowledgeWithUsage(translated, List.of())));
+
+        mvc.perform(authorized(post("/api/admin/knowledge/" + ID + "/translations/en/suggest")))
+                .andExpect(status().isOk())
+                .andExpect(content().json("{\"language\":\"en\",\"text\":\"Parking is free.\"}"));
+        mvc.perform(authorized(put("/api/admin/knowledge/" + ID + "/translations/en"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"Parking is free.\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.translations.en").value("Parking is free."));
+        mvc.perform(authorized(post("/api/admin/knowledge/" + ID + "/translate-all")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.translations.en").value("Parking is free."));
+    }
+
+    @Test
+    void translationErrorsAreCodes() throws Exception {
+        when(knowledge.suggestTranslation("40_robbers", ID, "fr")).thenThrow(new InvalidKnowledgeException("UNKNOWN_LANGUAGE"));
+        when(knowledge.translateAll("40_robbers", ID)).thenThrow(new TranslationFailedException("503", null));
+
+        mvc.perform(authorized(post("/api/admin/knowledge/" + ID + "/translations/fr/suggest")))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error").value("UNKNOWN_LANGUAGE"));
+        mvc.perform(authorized(post("/api/admin/knowledge/" + ID + "/translate-all")))
+                .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.error").value("TRANSLATION_FAILED"));
     }
 
     @Test

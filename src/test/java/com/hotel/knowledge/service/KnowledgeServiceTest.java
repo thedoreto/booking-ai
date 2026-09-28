@@ -14,6 +14,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,15 +43,15 @@ class KnowledgeServiceTest {
         when(repository.findByIds("seven_stars", List.of(parking, empty, breakfast)))
                 .thenReturn(List.of(document("Паркингът е безплатен."), document(" "), document(null), document("Закуска от 7 до 10.")));
 
-        assertThat(service.textsByIds("seven_stars", Arrays.asList(parking, null, empty, breakfast)))
+        assertThat(service.textsByIds("seven_stars", Arrays.asList(parking, null, empty, breakfast), "bg"))
                 .containsExactly("Паркингът е безплатен.", "Закуска от 7 до 10.");
     }
 
     @Test
     void buttonWithoutIdsDoesNotAskMongo() {
-        assertThat(service.textsByIds("seven_stars", null)).isEmpty();
-        assertThat(service.textsByIds("seven_stars", List.of())).isEmpty();
-        assertThat(service.textsByIds("seven_stars", Arrays.asList((ObjectId) null))).isEmpty();
+        assertThat(service.textsByIds("seven_stars", null, "bg")).isEmpty();
+        assertThat(service.textsByIds("seven_stars", List.of(), "bg")).isEmpty();
+        assertThat(service.textsByIds("seven_stars", Arrays.asList((ObjectId) null), "bg")).isEmpty();
         verify(repository, never()).findByIds(anyString(), anyList());
     }
 
@@ -152,6 +153,37 @@ class KnowledgeServiceTest {
         assertThat(service.delete("seven_stars", "not-an-id")).isFalse();
         assertThat(service.delete("seven_stars", null)).isFalse();
         verify(repository).delete(anyString(), any());
+    }
+
+    @Test
+    void buttonGetsTheTranslationOfTheChatLanguageOrTheMainText() {
+        ObjectId translated = new ObjectId();
+        ObjectId notTranslated = new ObjectId();
+        KnowledgeDocument parking = document("Паркингът е безплатен.");
+        parking.setTranslations(Map.of("en", "Parking is free.", "de", " "));
+        when(repository.findByIds("seven_stars", List.of(translated, notTranslated)))
+                .thenReturn(List.of(parking, document("Закуска от 7 до 10.")));
+
+        assertThat(service.textsByIds("seven_stars", List.of(translated, notTranslated), "en"))
+                .containsExactly("Parking is free.", "Закуска от 7 до 10.");
+        // Празен превод – основният текст
+        assertThat(service.textsByIds("seven_stars", List.of(translated, notTranslated), "de"))
+                .containsExactly("Паркингът е безплатен.", "Закуска от 7 до 10.");
+        assertThat(service.textsByIds("seven_stars", List.of(translated, notTranslated), null))
+                .containsExactly("Паркингът е безплатен.", "Закуска от 7 до 10.");
+    }
+
+    @Test
+    void translationsAreSavedTrimmedAndChecked() {
+        ObjectId id = new ObjectId();
+        when(repository.setTranslations(eq("seven_stars"), eq(id), any())).thenReturn(Optional.of(document("Текст")));
+
+        service.setTranslations("seven_stars", id.toHexString(), Map.of("en", " Parking is free. "));
+
+        verify(repository).setTranslations("seven_stars", id, Map.of("en", "Parking is free."));
+        assertThatThrownBy(() -> service.setTranslations("seven_stars", id.toHexString(), Map.of("en", " ")))
+                .isInstanceOfSatisfying(InvalidKnowledgeException.class, e -> assertThat(e.getCode()).isEqualTo("TEXT_REQUIRED"));
+        assertThat(service.setTranslations("seven_stars", "not-an-id", Map.of("en", "Text"))).isEmpty();
     }
 
     private ObjectId existing(String text) {
