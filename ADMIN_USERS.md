@@ -56,6 +56,9 @@ Vite + React + MUI в `admin-ui/`; booking-ai я сервира на `/admin/` (
 |---|---|---|
 | `POST /api/admin/login` `{ hotelId, email, password }` | Вход | `200 { token, hotelId, email, name }`; `401 { error: "INVALID_CREDENTIALS" }`; `429 { error: "TOO_MANY_ATTEMPTS" }` |
 | `GET /api/admin/me` с `Authorization: Bearer <token>` | Кой е влязъл (дали токенът още важи) | `200 { hotelId, email, name }`; `401 { error: "UNAUTHORIZED" }` |
+| `GET /api/admin/knowledge` с `Authorization: Bearer <token>` | Знанията на хотела от токена, по категория и заглавие | `200 [{ id, title, category, tags, source, text }]`; `401` |
+
+Всички адреси под `/api/admin/` освен `/login` минават през `AdminAuthInterceptor` – нов адрес е защитен по подразбиране.
 
 - Всяка грешка при вход – непознат хотел, хотел без админ, друг имейл, грешна парола – дава същия `401`. Отговорът отнема еднакво време, за да не може да се разбере кои хотели и имейли съществуват.
 - **Лимит на опитите:** 5 грешни опита за хотел + имейл → 15 минути отказ (`429`), дори с правилната парола. Броячът е в паметта – при рестарт започва отначало. Успешен вход го нулира.

@@ -27,8 +27,14 @@
 - `config/AdminUiConfig`: `/admin` → `/admin/` → `index.html`. `frontend-maven-plugin` 1.15.1 (Node v22.22.1 в `target/`) – `npm ci` + `npm run build` в `prepare-package`; Vite билдва направо в `target/classes/static/admin`. Dockerfile копира `admin-ui/`; `node_modules` – в `.gitignore` и `.dockerignore`.
 - Тест: `AdminUiConfigTest` (само Spring MVC).
 
+### Админ панел – знанията (не е комитнато)
+- `AdminAuthInterceptor` + `AdminWebConfig`: всички `/api/admin/**` освен `/login` искат токен; админът – в request-а (`@RequestAttribute`). `/me` вече не проверява токена сам.
+- `GET /api/admin/knowledge` (`AdminKnowledgeController`) → `KnowledgeService.findAll` → `KnowledgeRepository.findAll(hotelId)` (без `embedding`, по категория и заглавие).
+- `admin-ui`: таб „Знания“ – групирани по категория, заглавие и етикети, отварят се за целия текст, `id` и източник; търсене по заглавие, текст, категория и етикети; изтекъл токен → изход.
+- Тестове: `AdminWebConfigTest` (Spring MVC: `/login` отворен, без/с грешен токен – 401, `/me`, знанията на хотела от токена без `embedding`, CORS preflight), `KnowledgeRepositoryTest` (+1).
+
 ### Проверено
-- booking-ai: всички тестове без облак – 192; `AdminPasswordHash` през `exec:java` връща BCrypt хеш; `mvn clean package` – jar-ът съдържа `static/admin/index.html` и `assets/`; ESLint за `admin-ui` без забележки.
+- booking-ai: всички тестове без облак – 196 (след знанията); преди тях – 192; `AdminPasswordHash` през `exec:java` връща BCrypt хеш; `mvn clean package` – jar-ът съдържа `static/admin/index.html` и `assets/`; ESLint за `admin-ui` без забележки.
 
 ## Сесия 2026-09-28 – модел и repository за всяка колекция, преводи на хотела
 
