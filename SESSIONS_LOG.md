@@ -2,6 +2,34 @@
 
 Планът и идеите за следващи сесии са в `PLAN.md`.
 
+## Сесия 2026-09-28 (2) – commit на топиците, план за сигурността, вход в админ панела
+
+### Commit-и на топиците и бележките
+- Топиците `hotel-requests-/hotel-replies-` за `40_robbers` и `seven_stars` са създадени в Aiven, локалният тест минава. booking-ai `623f87d` (код), `7f54a78` (бележки); booking-system `cecf038`, `4d5d273`; booking-ui `b483312`.
+- Старите `hotel-requests-topic`, `hotel-replies-topic`, `test-topic` не се ползват в кода на трите проекта; `test-topic` не се ползва и в стария код в Render (от `5ea8361`). Безплатният Aiven дава 5 топика = 2 хотела с топици по хотел; старите два се трият при deploy на seven_stars.
+- `db68e63`: `SELF_LEARNING_IDEAS.md` – „AI опция за подобрение“ след админа и отчетите (`PLAN.md`).
+
+### План за сигурността (`82aca19`)
+- `SECURITY_PLAN.md`: booking-ai да не пази нищо за достъп до хотелите. Стъпка 1 – кой е потребителят (А: `resolve_user` през Kafka; Б: booking-ai не знае потребителите; В: отделен чат токен, проверен с публичния ключ – като Intercom/Zendesk); стъпка 2 – нашите тайни извън git; стъпка 3 – Kafka потребител и ACL по хотел. Сравнение с хотелските асистенти (HiJiffy, Asksuite…).
+- **Целият план е отложен**, докато не стане ясно дали ще има реални хотели; паролите в git не се сменят.
+
+### Вход в админ панела – стъпка 1, бекенд (не е комитнато)
+- Админът на хотела е в `hotel_settings`: `admin: { email, name, passwordHash }` (BCrypt), отделен от потребителите на сайта; booking-system и Kafka не участват. Входът е по хотел + имейл + парола – един имейл може да е админ на няколко хотела. Подробно: `ADMIN_USERS.md`.
+- Нов пакет `admin/`: `AdminAuthController` (`POST /api/admin/login`, `GET /api/admin/me`; 401/429 с кодове на грешки), `AdminAuthService` (еднакъв отговор и време за всяка грешка – сравнение с `dummyHash`; 5 грешни опита за хотел + имейл → 15 мин.; `verify` проверява и в Mongo, че още е админ), `AdminTokens` (JWT HS256, 8 часа, audience `booking-ai-admin`, ключ `admin.jwt-secret`), `AdminPasswordHash` (хеш от конзолата през `exec:java`).
+- `HotelSettings.Admin`, `HotelSettingsRepository.findByHotelId` (без кеш), зависимост `spring-security-crypto` (без Spring Security).
+- **Нова задължителна настройка `admin.jwt-secret` / env `ADMIN_JWT_SECRET`** (32+ знака) – без нея booking-ai не стартира, локално и в Render.
+- Тестове: `AdminTokensTest` (8), `AdminAuthServiceTest` (9), `AdminAuthControllerTest` (4).
+
+- Локално: `admin.jwt-secret` е добавен в `application.properties` (в `.gitignore`); админът на `40_robbers` е записан в `hotel_settings` с временна програма извън проекта.
+
+### Вход в админ панела – стъпка 2, страницата (не е комитнато)
+- `admin-ui/` (Vite + React + MUI, като booking-ui): вход (хотел, имейл, парола; хотелът се помни или идва от `?hotel=`) и начална страница с хотела, името и „Изход“. Токенът – в `sessionStorage`, проверява се с `/me` при отваряне. Текстовете – на български в страницата.
+- `config/AdminUiConfig`: `/admin` → `/admin/` → `index.html`. `frontend-maven-plugin` 1.15.1 (Node v22.22.1 в `target/`) – `npm ci` + `npm run build` в `prepare-package`; Vite билдва направо в `target/classes/static/admin`. Dockerfile копира `admin-ui/`; `node_modules` – в `.gitignore` и `.dockerignore`.
+- Тест: `AdminUiConfigTest` (само Spring MVC).
+
+### Проверено
+- booking-ai: всички тестове без облак – 192; `AdminPasswordHash` през `exec:java` връща BCrypt хеш; `mvn clean package` – jar-ът съдържа `static/admin/index.html` и `assets/`; ESLint за `admin-ui` без забележки.
+
 ## Сесия 2026-09-28 – модел и repository за всяка колекция, преводи на хотела
 
 ### Модел и repository за всяка колекция (booking-ai `9340371`)

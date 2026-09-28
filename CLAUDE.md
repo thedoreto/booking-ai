@@ -18,12 +18,13 @@
 - LangChain4j `1.0.0-beta1` (`langchain4j-google-ai-gemini-spring-boot-starter`, `@AiService`); модел от `gemini.base.model`, embeddings `gemini-embedding-001`
 - MongoDB Atlas (`spring-boot-starter-data-mongodb`, `$vectorSearch`, индекс `autoembed_index`)
 - Kafka (`spring-kafka`, Aiven, SSL/PKCS12)
-- Lombok, jjwt 0.11.5 и okhttp (в pom, но в кода не се ползват), Actuator
+- Lombok, jjwt 0.11.5 (JWT-тата на хотелите и на админ панела), `spring-security-crypto` (само BCrypt, без Spring Security), okhttp (в pom, но в кода не се ползва), Actuator
 - Docker multi-stage (Temurin 17) за Render; порт през `$PORT`
 
 ## 3. Структура (`src/main/java/com/hotel`)
 - `BookingAiApplication` – entry point
 - `config/CorsConfig` – CORS за `/api/**` (всички origins)
+- `config/AdminUiConfig` – `/admin` → `/admin/` → `index.html` на админ панела (билднат в `static/admin`)
 - `config/MongoConfig` – converter-ът на Spring Boot без поле `_class` в записаните документи (всяка колекция има един модел)
 - `langchain/controller` – `AiLangChainController`: `/api/chat`, `/api/shortcuts`, `/api/rooms/available` и `/api/bookings` (последните две – директно към booking-system, без LLM), `/api/chat/settings` (езиците от `HotelLanguages`, избраният по header `Accept-Language` и текстовете на прозореца в UI – всички ключове `ui.*` от `translations`); `/api/rooms/types` превежда имената на типовете (`Texts.translate`)
 - `langchain/assistant/Assistant` – `@AiService` интерфейс със system prompt (на български); `{language}` – името на избрания език (`HotelLanguages.nameOf`), Gemini отговаря на него в същото едно извикване
@@ -38,7 +39,7 @@
 - `langchain/service/HotelLanguages` – езиците на чата за хотел от същата колекция `hotel_settings` (`languages: [{ code, name }]` в реда на менюто, `defaultLanguage`); без `languages` – само български, `defaultLanguage` извън списъка – първият език; `resolve(hotelId, код)` – поисканият език, ако хотелът го има, иначе езикът по подразбиране. Кеш в RAM, презарежда на 5 мин.
 - `langchain/service/TranslationService` – преводите на два слоя (модел `Translation`: `{ _id, key?, texts: { bg, en, ... } }`, през `TranslationRepository`): `translations_<hotelId>` (на хотела, по желание) с предимство пред общата `translations`. `forRequest(hotelId, език)` дава `Texts` за една заявка: `message(key[, параметри])` – съобщение от кода, `{име}` се заменя; езиците поред – поисканият, езикът по подразбиране на хотела, `bg`, за всеки първо хотелът, после общата; без запис – самият `key`. `translate(текст)` – текст отвън (бекенд, напр. типовете стаи), търси се по съдържанието на който и да е език в записите без `key`, само на поискания език, първо при хотела; без превод – текстът както е дошъл (записът трябва да съдържа текста точно както идва от бекенда). `withPrefix("ui.")` – ключовете от двата слоя. `forRequest(null, …)` – само общата (непознат хотел). Всяка колекция – отделен кеш в RAM, презарежда на 5 мин. Всички текстове за потребителя в контролера, `RoomBookingService` и `HotelTools` минават през нея (нов текст в кода = нов запис с `key` в Mongo); помощните методи получават `Texts`, не езика
 - `langchain/config` – `AiConfig` (Gemini beans), `LangChainConfig` (ChatMemory), `KafkaCertInitializer`
-- `langchain/model` + `langchain/repository` – **всяка колекция има модел и repository; само repository-то знае името на колекцията и получава `hotelId`**, никога готово име: `Shortcut`/`ShortcutRepository` (`shortcuts_<hotelId>`), `ChatLog`/`ChatLogRepository` (`logs_<hotelId>`), `HotelSettings`/`HotelSettingsRepository` (`hotel_settings`: `hotelId`, `jwtPublicKey`, `languages`, `defaultLanguage` – четат го `HotelKeys` и `HotelLanguages`), `Translation`/`TranslationRepository` (`translations`, `translations_<hotelId>`); знанията – в `knowledge/`. Моделите са с `@Document` без име. `service/` – Shortcuts и `KafkaService` (producer)
+- `langchain/model` + `langchain/repository` – **всяка колекция има модел и repository; само repository-то знае името на колекцията и получава `hotelId`**, никога готово име: `Shortcut`/`ShortcutRepository` (`shortcuts_<hotelId>`), `ChatLog`/`ChatLogRepository` (`logs_<hotelId>`), `HotelSettings`/`HotelSettingsRepository` (`hotel_settings`: `hotelId`, `jwtPublicKey`, `languages`, `defaultLanguage`, `admin` – четат го `HotelKeys`, `HotelLanguages` и `AdminAuthService` (`findByHotelId`, без кеш)), `Translation`/`TranslationRepository` (`translations`, `translations_<hotelId>`); знанията – в `knowledge/`. Моделите са с `@Document` без име. `service/` – Shortcuts и `KafkaService` (producer)
 - `langchain/service/HotelRegistry` – кои хотели съществуват: всеки с колекция `knowledge_<hotelId>` (`KnowledgeRepository.findHotelIds()`) и безопасен формат. Контролерът отказва непознат `hotelId` на всички адреси преди логовете, Gemini и Kafka (иначе `logs_<hotelId>` би се създала за всяко измислено име). Списъкът се презарежда от Mongo най-много веднъж в минута
 - `langchain/service/GeminiBudget` (настройките на Gemini, с имената за Render – в `GEMINI_PROPERTIES.md`) – лимит на текстовите съобщения към Gemini за хотел: на минута и на ден (`chat.gemini-limit.per-minute`=5, `chat.gemini-limit.per-day`=200; денят – по тихоокеанско време като квотата на Gemini). Броячите са в RAM. Над лимита – отказ без Gemini, в `logs_` само първият отказ в прозореца (`HOTEL_LIMIT_MINUTE`/`HOTEL_LIMIT_DAY`). Бутоните не се броят
 - `langchain/tools/ShortcutToolRunner` – бутон с `action.type: "tool"` изпълнява tool от `HotelTools` по име (`@Tool` name или името на метода), без Gemini; параметрите са `null`
@@ -48,6 +49,7 @@
   - `ChatLogService` – асинхронен запис в отделна нишка `chat-log-writer` (опашка 1000)
   - `ChatLogRepository` – `insert` на отделен запис, `addFlowStep` – upsert по `flowId`; TTL индекс 180 дни по `timestamp` и индекс по `flowId` при първия запис в колекцията
   - `GeminiUsageTracker` (`ChatModelListener`) – извиквания, токени и tools на Gemini за текущата заявка
+- `admin/` – админ панелът на хотела (всичко в `ADMIN_USERS.md`); отделен от чата и от потребителите на сайта на хотела, без Gemini и Kafka. `AdminAuthController`: `POST /api/admin/login` `{hotelId, email, password}` → `{token, hotelId, email, name}`, `GET /api/admin/me`; тук има HTTP кодове (401, 429) и кодове на грешки вместо текстове. `AdminAuthService` – админът е `admin: { email, name, passwordHash }` (BCrypt) в `hotel_settings` на хотела; входът е по хотел + имейл (един имейл може да е админ на няколко хотела); еднакъв отговор и време за всяка грешка; 5 грешни опита за хотел + имейл → 15 мин. отказ (в RAM); `verify(token)` проверява и в Mongo, че още е админ. `AdminTokens` – JWT HS256 с `admin.jwt-secret` (env `ADMIN_JWT_SECRET`, най-малко 32 знака, **без него приложението не стартира**), 8 часа, `hotelId` идва от токена. `AdminPasswordHash` – хеш на парола от конзолата. Страницата е в `admin-ui/` (Vite + React + MUI, текстовете на български в нея), отваря се на `/admin/`
 - `knowledge/` – `KnowledgeService` (`textsByIds(hotelId, ids)` за бутон със знание, `findRelevant(hotelId, въпрос)` – embed + vector search), `KnowledgeRepository` (`findByIds`, `searchByVector`, `findHotelIds`; префиксът `knowledge_` е само тук), модел `KnowledgeDocument`
 
 ## 4. Команди
@@ -57,7 +59,10 @@
 ./mvnw -o test -Dtest='!BookingAiApplicationTests'   # всички тестове без облак (без contextLoads)
 ./mvnw spring-boot:run             # локално, порт 8081
 docker build -t booking-ai .       # Docker образ (слуша на $PORT, default 8080)
+cd admin-ui && npm run dev         # админ панелът локално: http://localhost:5174/admin/ (/api → порт 8081)
+cd admin-ui && npm run lint        # ESLint за админ панела
 ```
+`./mvnw` не работи (липсва `.mvn/wrapper/maven-wrapper.properties`) – вместо него `$(ls -d ~/.m2/wrapper/dists/*/*/*/bin/mvn | head -1)`. `package` билдва и `admin-ui` (сваля Node в `target/`); `test` – не.
 Няма линтер/форматер конфигуриран.
 
 ## 5. Конвенции
