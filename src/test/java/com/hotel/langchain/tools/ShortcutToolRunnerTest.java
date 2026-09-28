@@ -11,6 +11,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,8 +23,9 @@ class ShortcutToolRunnerTest {
     private static final ChatUser USER = new ChatUser("user-1", "token-1");
 
     private final RoomBookingService roomBookingService = mock(RoomBookingService.class);
+    private final RoomTypeService roomTypeService = mock(RoomTypeService.class);
     private final ShortcutToolRunner runner = new ShortcutToolRunner(new HotelTools(
-            mock(HotelBackendClient.class), mock(RoomTypeService.class), roomBookingService, TestTranslations.keys()));
+            mock(HotelBackendClient.class), roomTypeService, roomBookingService, TestTranslations.keys()));
 
     @BeforeEach
     void setTenant() {
@@ -52,6 +54,16 @@ class ShortcutToolRunnerTest {
 
         assertThat(runner.run("showMyBookings")).contains("Вашите резервации");
         assertThat(TenantContext.getUiAction()).isEqualTo(bookings);
+    }
+
+    @Test
+    void roomTypesComeTranslatedToTheLanguageOfTheRequest() {
+        TenantContext.setLanguage("en");
+        when(roomTypeService.getRoomTypes("seven_stars")).thenReturn(List.of(
+                new RoomTypeService.RoomType("SINGLE", "Единична стая"),
+                new RoomTypeService.RoomType("DOUBLE", "Двойна стая")));
+
+        assertThat(runner.run("getRoomTypes")).contains("tools.roomTypes {types=[en] Единична стая, [en] Двойна стая}");
     }
 
     @Test

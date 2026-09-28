@@ -103,8 +103,10 @@ public class HotelTools {
         if (types.isEmpty()) {
             return message("tools.roomTypesUnavailable");
         }
-        return texts().message("tools.roomTypes", Map.of("types",
-                types.stream().map(RoomTypeService.RoomType::name).collect(Collectors.joining(", "))));
+        // От бутон отговорът отива директно в UI – имената на типовете се превеждат като в /api/rooms/types
+        Texts texts = texts();
+        return texts.message("tools.roomTypes", Map.of("types",
+                types.stream().map(type -> texts.translate(type.name())).collect(Collectors.joining(", "))));
     }
 
     @Tool("Показва на потребителя календар за избор на период и след това свободните стаи. " +
