@@ -3,6 +3,7 @@ package com.hotel.knowledge.repository;
 import com.hotel.knowledge.model.KnowledgeDocument;
 import org.bson.Document;
 import org.bson.types.ObjectId;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -48,6 +49,13 @@ public class KnowledgeRepository {
                 .map(id -> byId.get(id.toHexString()))
                 .filter(Objects::nonNull)
                 .toList();
+    }
+
+    // Всички знания на хотела за админ панела, по категория и заглавие. Без embedding.
+    public List<KnowledgeDocument> findAll(String hotelId) {
+        Query query = new Query().with(Sort.by("category", "title"));
+        query.fields().exclude("embedding");
+        return mongoTemplate.find(query, KnowledgeDocument.class, collection(hotelId));
     }
 
     public List<KnowledgeDocument> searchByVector(String hotelId, List<Double> embedding) {

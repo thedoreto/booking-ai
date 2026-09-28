@@ -1,7 +1,11 @@
-import { AppBar, Box, Button, Container, Toolbar, Typography } from '@mui/material'
+import { useState } from 'react'
+import { AppBar, Box, Button, Container, Tab, Tabs, Toolbar, Typography } from '@mui/material'
+import KnowledgePage from './KnowledgePage.jsx'
 
-// Началната страница след вход. Тук ще влязат отчетите, знанията и бутоните.
+// Страницата след вход: горна лента и табове. Тук ще влязат отчетите, бутоните и т.н.
 export default function HomePage({ admin, onLogout }) {
+  const [tab, setTab] = useState('knowledge')
+
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'grey.100' }}>
       <AppBar position="static">
@@ -17,13 +21,15 @@ export default function HomePage({ admin, onLogout }) {
           </Button>
         </Toolbar>
       </AppBar>
-      <Container sx={{ py: 4 }}>
-        <Typography variant="h5" gutterBottom>
-          Здравейте{admin.name ? `, ${admin.name}` : ''}!
-        </Typography>
-        <Typography color="text.secondary">
-          Влязохте като администратор на хотел {admin.hotelId} ({admin.email}).
-        </Typography>
+      <Box sx={{ bgcolor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}>
+        <Container>
+          <Tabs value={tab} onChange={(e, value) => setTab(value)}>
+            <Tab value="knowledge" label="Знания" />
+          </Tabs>
+        </Container>
+      </Box>
+      <Container sx={{ py: 3 }}>
+        {tab === 'knowledge' && <KnowledgePage onUnauthorized={onLogout} />}
       </Container>
     </Box>
   )

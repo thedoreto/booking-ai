@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Box, CircularProgress } from '@mui/material'
 import { clearToken, getToken, me, saveToken } from './api.js'
 import LoginPage from './LoginPage.jsx'
@@ -25,10 +25,11 @@ export default function App() {
     setAdmin({ hotelId, email, name })
   }
 
-  function handleLogout() {
+  // useCallback – страниците я ползват в useEffect (изтекъл токен → изход)
+  const handleLogout = useCallback(() => {
     clearToken()
     setAdmin(null)
-  }
+  }, [])
 
   if (checking) {
     return (

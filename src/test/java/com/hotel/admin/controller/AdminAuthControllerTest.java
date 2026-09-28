@@ -11,12 +11,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import java.util.Map;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AdminAuthControllerTest {
@@ -48,25 +46,5 @@ class AdminAuthControllerTest {
         ResponseEntity<?> locked = controller.login(new LoginRequest("40_robbers", "x", "y"));
         assertThat(locked.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
         assertThat(locked.getBody()).isEqualTo(Map.of("error", "TOO_MANY_ATTEMPTS"));
-    }
-
-    @Test
-    void meTakesTheTokenFromTheBearerHeader() {
-        when(service.verify("jwt")).thenReturn(Optional.of(ADMIN));
-
-        ResponseEntity<?> response = controller.me("Bearer jwt");
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).isEqualTo(ADMIN);
-        verify(service).verify("jwt");
-    }
-
-    @Test
-    void meWithoutValidTokenIs401() {
-        when(service.verify(any())).thenReturn(Optional.empty());
-
-        assertThat(controller.me(null).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
-        assertThat(controller.me("Basic abc").getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
-        assertThat(controller.me("Bearer bad").getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 }

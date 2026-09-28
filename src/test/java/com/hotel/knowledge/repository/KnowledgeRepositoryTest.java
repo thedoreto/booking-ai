@@ -35,6 +35,16 @@ class KnowledgeRepositoryTest {
     }
 
     @Test
+    void allDocumentsOfTheHotelSortedWithoutEmbedding() {
+        repository.findAll("40_robbers");
+
+        org.mockito.ArgumentCaptor<Query> query = org.mockito.ArgumentCaptor.forClass(Query.class);
+        org.mockito.Mockito.verify(mongoTemplate).find(query.capture(), eq(KnowledgeDocument.class), eq("knowledge_40_robbers"));
+        assertThat(query.getValue().getFieldsObject()).containsEntry("embedding", 0);
+        assertThat(query.getValue().getSortObject().toJson()).isEqualTo("{\"category\": 1, \"title\": 1}");
+    }
+
+    @Test
     void hotelsAreTheKnowledgeCollections() {
         when(mongoTemplate.getCollectionNames())
                 .thenReturn(Set.of("knowledge_seven_stars", "shortcuts_seven_stars", "logs_fake", "shortcuts_other"));

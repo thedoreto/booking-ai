@@ -38,6 +38,11 @@ public class KnowledgeService {
                 .toList();
     }
 
+    // Всички знания на хотела (админ панел), без embedding
+    public List<KnowledgeDocument> findAll(String hotelId) {
+        return knowledgeRepo.findAll(hotelId);
+    }
+
     // RAG: най-близките по смисъл знания на хотела до въпроса (vector search в knowledge_<hotelId>)
     public List<KnowledgeDocument> findRelevant(String hotelId, String question) {
      //   testKnowledge();

@@ -44,6 +44,15 @@ export function login(hotelId, email, password) {
   return request('/login', { method: 'POST', body: JSON.stringify({ hotelId, email, password }) })
 }
 
+function authorized(token) {
+  return { headers: { Authorization: `Bearer ${token}` } }
+}
+
 export function me(token) {
-  return request('/me', { headers: { Authorization: `Bearer ${token}` } })
+  return request('/me', authorized(token))
+}
+
+// Знанията на хотела: [{ id, title, category, tags, source, text }]
+export function knowledge(token) {
+  return request('/knowledge', authorized(token))
 }
