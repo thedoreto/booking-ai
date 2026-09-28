@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Chip, CircularProgress, InputAdornment, TextField, Typography,
+  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Chip, CircularProgress, InputAdornment, TextField, Typography,
 } from '@mui/material'
 import { getToken, knowledge } from './api.js'
+import KnowledgeEditor from './KnowledgeEditor.jsx'
 
 const NO_CATEGORY = 'Без категория'
 
-// Знанията на хотела (knowledge_<hotelId>) – само преглед: групирани по категория, търсене по заглавие, текст и етикети
+// Знанията на хотела (knowledge_<hotelId>): групирани по категория, търсене по заглавие, текст и етикети; редакция на място
 export default function KnowledgePage({ onUnauthorized }) {
   const [documents, setDocuments] = useState(null)
   const [error, setError] = useState(null)
@@ -25,6 +26,13 @@ export default function KnowledgePage({ onUnauthorized }) {
   }, [onUnauthorized])
 
   const groups = useMemo(() => groupByCategory(filter(documents || [], search)), [documents, search])
+  // За подсказките във формата – всички категории и етикети на хотела
+  const categories = useMemo(() => distinct((documents || []).map((doc) => doc.category)), [documents])
+  const allTags = useMemo(() => distinct((documents || []).flatMap((doc) => doc.tags || [])), [documents])
+
+  function handleSaved(updated) {
+    setDocuments((docs) => docs.map((doc) => (doc.id === updated.id ? updated : doc)))
+  }
 
   if (error) {
     return <Alert severity="error">{error}</Alert>
@@ -63,7 +71,8 @@ export default function KnowledgePage({ onUnauthorized }) {
             {category} ({docs.length})
           </Typography>
           {docs.map((doc) => (
-            <KnowledgeItem key={doc.id} doc={doc} />
+            <KnowledgeItem key={doc.id} doc={doc} categories={categories} allTags={allTags} onSaved={handleSaved}
+              onUnauthorized={onUnauthorized} />
           ))}
         </Box>
       ))}
@@ -71,7 +80,9 @@ export default function KnowledgePage({ onUnauthorized }) {
   )
 }
 
-function KnowledgeItem({ doc }) {
+function KnowledgeItem({ doc, categories, allTags, onSaved, onUnauthorized }) {
+  const [editing, setEditing] = useState(false)
+
   return (
     <Accordion disableGutters>
       <AccordionSummary expandIcon="▾">
@@ -83,11 +94,32 @@ function KnowledgeItem({ doc }) {
         </Box>
       </AccordionSummary>
       <AccordionDetails>
-        <Typography sx={{ whiteSpace: 'pre-wrap', mb: 2 }}>{doc.text || '—'}</Typography>
-        <Typography variant="caption" color="text.secondary" component="div">
-          id: <Box component="span" sx={{ fontFamily: 'monospace', userSelect: 'all' }}>{doc.id}</Box>
-          {doc.source && <> · източник: {doc.source}</>}
-        </Typography>
+        {editing ? (
+          <KnowledgeEditor
+            doc={doc}
+            categories={categories}
+            allTags={allTags}
+            onSaved={(updated) => {
+              setEditing(false)
+              onSaved(updated)
+            }}
+            onCancel={() => setEditing(false)}
+            onUnauthorized={onUnauthorized}
+          />
+        ) : (
+          <>
+            <Typography sx={{ whiteSpace: 'pre-wrap', mb: 2 }}>{doc.text || '—'}</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
+              <Typography variant="caption" color="text.secondary" component="div">
+                id: <Box component="span" sx={{ fontFamily: 'monospace', userSelect: 'all' }}>{doc.id}</Box>
+                {doc.source && <> · източник: {doc.source}</>}
+              </Typography>
+              <Button size="small" variant="outlined" onClick={() => setEditing(true)}>
+                Редактирай
+              </Button>
+            </Box>
+          </>
+        )}
       </AccordionDetails>
     </Accordion>
   )
@@ -114,6 +146,10 @@ function groupByCategory(documents) {
     groups.get(category).push(doc)
   }
   return [...groups.entries()]
+}
+
+function distinct(values) {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'bg'))
 }
 
 function preview(text) {

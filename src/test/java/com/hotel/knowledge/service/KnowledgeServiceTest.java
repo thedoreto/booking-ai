@@ -6,12 +6,21 @@ import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.output.Response;
 import org.bson.types.ObjectId;
+import com.hotel.knowledge.service.KnowledgeService.EmbeddingFailedException;
+import com.hotel.knowledge.service.KnowledgeService.InvalidKnowledgeException;
+import com.hotel.knowledge.service.KnowledgeService.KnowledgeChanges;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -52,6 +61,70 @@ class KnowledgeServiceTest {
         when(repository.searchByVector("seven_stars", List.of(0.5, -1.0))).thenReturn(found);
 
         assertThat(service.findRelevant("seven_stars", "Има ли паркинг?")).isSameAs(found);
+    }
+
+    @Test
+    void editWithoutNewTextDoesNotCallGemini() {
+        ObjectId id = existing("Паркингът е безплатен.");
+
+        service.update("seven_stars", id.toHexString(),
+                new KnowledgeChanges(" Паркинг ", " ", List.of("паркинг", " ", "паркинг", "кола"), null, "Паркингът е безплатен. "));
+
+        ArgumentCaptor<KnowledgeDocument> changes = ArgumentCaptor.forClass(KnowledgeDocument.class);
+        verify(repository).update(eq("seven_stars"), eq(id), changes.capture(), isNull());
+        verify(embeddingModel, never()).embed(anyString());
+        assertThat(changes.getValue().getTitle()).isEqualTo("Паркинг");
+        assertThat(changes.getValue().getCategory()).isNull();
+        assertThat(changes.getValue().getTags()).containsExactly("паркинг", "кола");
+        assertThat(changes.getValue().getText()).isEqualTo("Паркингът е безплатен.");
+    }
+
+    @Test
+    void newTextGetsANewEmbedding() {
+        ObjectId id = existing("Паркингът е безплатен.");
+        when(embeddingModel.embed("Паркингът струва 10 лв.")).thenReturn(Response.from(Embedding.from(new float[]{0.5f, -1f})));
+
+        service.update("seven_stars", id.toHexString(), new KnowledgeChanges(null, null, null, null, "Паркингът струва 10 лв."));
+
+        verify(repository).update(eq("seven_stars"), eq(id), any(), eq(List.of(0.5, -1.0)));
+    }
+
+    @Test
+    void nothingIsSavedWhenGeminiFails() {
+        ObjectId id = existing("Паркингът е безплатен.");
+        when(embeddingModel.embed(anyString())).thenThrow(new RuntimeException("503"));
+
+        assertThatThrownBy(() -> service.update("seven_stars", id.toHexString(), new KnowledgeChanges(null, null, null, null, "Нов текст")))
+                .isInstanceOf(EmbeddingFailedException.class);
+        verify(repository, never()).update(anyString(), any(), any(), any());
+    }
+
+    @Test
+    void unknownOrInvalidIdIsNotFound() {
+        when(repository.findByIds(anyString(), anyList())).thenReturn(List.of());
+
+        assertThat(service.update("seven_stars", new ObjectId().toHexString(), new KnowledgeChanges(null, null, null, null, "Текст"))).isEmpty();
+        assertThat(service.update("seven_stars", "not-an-id", new KnowledgeChanges(null, null, null, null, "Текст"))).isEmpty();
+        verify(repository, never()).update(anyString(), any(), any(), any());
+    }
+
+    @Test
+    void textIsRequiredAndLimited() {
+        String id = new ObjectId().toHexString();
+
+        assertThatThrownBy(() -> service.update("seven_stars", id, new KnowledgeChanges("Заглавие", null, null, null, "  ")))
+                .isInstanceOfSatisfying(InvalidKnowledgeException.class, e -> assertThat(e.getCode()).isEqualTo("TEXT_REQUIRED"));
+        String tooLong = "а".repeat(KnowledgeService.MAX_TEXT_LENGTH + 1);
+        assertThatThrownBy(() -> service.update("seven_stars", id, new KnowledgeChanges(null, null, null, null, tooLong)))
+                .isInstanceOfSatisfying(InvalidKnowledgeException.class, e -> assertThat(e.getCode()).isEqualTo("TEXT_TOO_LONG"));
+        verify(repository, never()).update(anyString(), any(), any(), any());
+    }
+
+    private ObjectId existing(String text) {
+        ObjectId id = new ObjectId();
+        when(repository.findByIds("seven_stars", List.of(id))).thenReturn(List.of(document(text)));
+        when(repository.update(eq("seven_stars"), eq(id), any(), any())).thenReturn(Optional.of(document(text)));
+        return id;
     }
 
     private static KnowledgeDocument document(String text) {

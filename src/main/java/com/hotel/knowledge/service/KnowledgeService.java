@@ -7,11 +7,37 @@ import org.bson.types.ObjectId;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
 public class KnowledgeService {
+
+    public static final int MAX_TEXT_LENGTH = 10_000;
+
+    // Промяната от админ панела. Празните title, category, source и tags махат полето.
+    public record KnowledgeChanges(String title, String category, List<String> tags, String source, String text) {}
+
+    // Невалидна промяна: code – TEXT_REQUIRED или TEXT_TOO_LONG
+    public static class InvalidKnowledgeException extends RuntimeException {
+        private final String code;
+
+        public InvalidKnowledgeException(String code) {
+            super(code);
+            this.code = code;
+        }
+
+        public String getCode() { return code; }
+    }
+
+    // Gemini не направи embedding – нищо не е записано
+    public static class EmbeddingFailedException extends RuntimeException {
+        public EmbeddingFailedException(Throwable cause) {
+            super(cause);
+        }
+    }
 
     private final KnowledgeRepository knowledgeRepo;
     private final EmbeddingModel embeddingModel;
@@ -43,23 +69,80 @@ public class KnowledgeService {
         return knowledgeRepo.findAll(hotelId);
     }
 
+    // Промяна от админ панела. Нов embedding (Gemini) – само ако текстът е друг; ако Gemini не отговори, нищо не се записва.
+    // Празно – невалиден id или няма такъв документ в knowledge_<hotelId>.
+    public Optional<KnowledgeDocument> update(String hotelId, String id, KnowledgeChanges changes) {
+        String text = trimToNull(changes.text());
+        if (text == null) {
+            throw new InvalidKnowledgeException("TEXT_REQUIRED");
+        }
+        if (text.length() > MAX_TEXT_LENGTH) {
+            throw new InvalidKnowledgeException("TEXT_TOO_LONG");
+        }
+        if (id == null || !ObjectId.isValid(id)) {
+            return Optional.empty();
+        }
+        ObjectId objectId = new ObjectId(id);
+        List<KnowledgeDocument> current = knowledgeRepo.findByIds(hotelId, List.of(objectId));
+        if (current.isEmpty()) {
+            return Optional.empty();
+        }
+        List<Double> embedding = null;
+        if (!text.equals(current.get(0).getText())) {
+            try {
+                embedding = embed(text);
+            } catch (RuntimeException e) {
+                System.err.println("Embedding failed for hotelId=" + hotelId + ", knowledge id=" + id + ": " + e);
+                throw new EmbeddingFailedException(e);
+            }
+        }
+
+        KnowledgeDocument document = new KnowledgeDocument();
+        document.setTitle(trimToNull(changes.title()));
+        document.setCategory(trimToNull(changes.category()));
+        document.setTags(cleanTags(changes.tags()));
+        document.setSource(trimToNull(changes.source()));
+        document.setText(text);
+        Optional<KnowledgeDocument> updated = knowledgeRepo.update(hotelId, objectId, document, embedding);
+        updated.ifPresent(d -> System.out.println("Knowledge updated: hotelId=" + hotelId + ", id=" + id
+                + (text.equals(current.get(0).getText()) ? "" : ", new embedding")));
+        return updated;
+    }
+
     // RAG: най-близките по смисъл знания на хотела до въпроса (vector search в knowledge_<hotelId>)
     public List<KnowledgeDocument> findRelevant(String hotelId, String question) {
      //   testKnowledge();
-        var embedding = embeddingModel.embed(question).content();
-
-        List<Double> vector = embedding.vectorAsList()
-                .stream()
-                .map(Float::doubleValue)
-                .toList();
-
-        var result = knowledgeRepo.searchByVector(hotelId, vector);
+        var result = knowledgeRepo.searchByVector(hotelId, embed(question));
 
         System.out.println("Question: " + question);
         System.out.println("Hotel: " + hotelId);
         System.out.println("Found: " + result.size());
 
         return result;
+    }
+
+    // Векторът на текста (gemini-embedding-001) – с него са и знанията, и въпросите
+    private List<Double> embed(String text) {
+        return embeddingModel.embed(text).content().vectorAsList().stream()
+                .map(Float::doubleValue)
+                .toList();
+    }
+
+    private static String trimToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    // Без празни и повторени, в реда на въвеждане
+    private static List<String> cleanTags(List<String> tags) {
+        if (tags == null) {
+            return null;
+        }
+        List<String> clean = tags.stream()
+                .map(KnowledgeService::trimToNull)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new))
+                .stream().toList();
+        return clean.isEmpty() ? null : clean;
     }
 
     // only testing

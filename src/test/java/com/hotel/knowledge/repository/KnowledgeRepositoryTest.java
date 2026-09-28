@@ -1,18 +1,24 @@
 package com.hotel.knowledge.repository;
 
 import com.hotel.knowledge.model.KnowledgeDocument;
+import org.bson.Document;
 import org.bson.types.ObjectId;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 
 import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class KnowledgeRepositoryTest {
@@ -38,10 +44,52 @@ class KnowledgeRepositoryTest {
     void allDocumentsOfTheHotelSortedWithoutEmbedding() {
         repository.findAll("40_robbers");
 
-        org.mockito.ArgumentCaptor<Query> query = org.mockito.ArgumentCaptor.forClass(Query.class);
-        org.mockito.Mockito.verify(mongoTemplate).find(query.capture(), eq(KnowledgeDocument.class), eq("knowledge_40_robbers"));
+        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
+        verify(mongoTemplate).find(query.capture(), eq(KnowledgeDocument.class), eq("knowledge_40_robbers"));
         assertThat(query.getValue().getFieldsObject()).containsEntry("embedding", 0);
         assertThat(query.getValue().getSortObject().toJson()).isEqualTo("{\"category\": 1, \"title\": 1}");
+    }
+
+    @Test
+    void updateSetsTheFieldsUnsetsTheEmptyOnesAndKeepsTheRest() {
+        ObjectId id = new ObjectId();
+        KnowledgeDocument changes = new KnowledgeDocument();
+        changes.setTitle("Паркинг");
+        changes.setTags(List.of());
+        changes.setText("Нов текст");
+
+        repository.update("40_robbers", id, changes, List.of(0.5, -1.0));
+
+        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
+        ArgumentCaptor<Update> update =
+                ArgumentCaptor.forClass(Update.class);
+        verify(mongoTemplate).findAndModify(query.capture(), update.capture(),
+                any(FindAndModifyOptions.class), eq(KnowledgeDocument.class),
+                eq("knowledge_40_robbers"));
+        assertThat(query.getValue().getQueryObject()).containsEntry("_id", id);
+        assertThat(query.getValue().getFieldsObject()).containsEntry("embedding", 0);
+        Document set = (Document) update.getValue().getUpdateObject().get("$set");
+        Document unset = (Document) update.getValue().getUpdateObject().get("$unset");
+        assertThat(set).containsEntry("title", "Паркинг").containsEntry("text", "Нов текст")
+                .containsEntry("embedding", List.of(0.5, -1.0));
+        assertThat(unset).containsKeys("category", "tags", "source");
+        // metadata и други полета не се пипат
+        assertThat(set).doesNotContainKey("metadata");
+        assertThat(unset).doesNotContainKey("metadata");
+    }
+
+    @Test
+    void updateWithoutNewEmbeddingKeepsTheOldOne() {
+        KnowledgeDocument changes = new KnowledgeDocument();
+        changes.setText("Текст");
+
+        repository.update("40_robbers", new ObjectId(), changes, null);
+
+        ArgumentCaptor<Update> update =
+                ArgumentCaptor.forClass(Update.class);
+        verify(mongoTemplate).findAndModify(any(Query.class), update.capture(),
+                any(FindAndModifyOptions.class), eq(KnowledgeDocument.class), anyString());
+        assertThat(update.getValue().getUpdateObject().toJson()).doesNotContain("embedding");
     }
 
     @Test

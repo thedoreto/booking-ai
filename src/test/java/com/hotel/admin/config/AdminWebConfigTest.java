@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
@@ -34,6 +35,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -121,6 +123,43 @@ class AdminWebConfigTest {
                 .andExpect(jsonPath("$[0].embedding").doesNotExist());
         // hotelId от адреса не се ползва
         verify(knowledgeService, never()).findAll("seven_stars");
+    }
+
+    @Test
+    void editGoesToTheHotelFromTheToken() throws Exception {
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId("66f000000000000000000001");
+        doc.setText("Нов текст");
+        when(knowledgeService.update(eq("40_robbers"), eq("66f000000000000000000001"), any())).thenReturn(Optional.of(doc));
+
+        mvc.perform(put("/api/admin/knowledge/66f000000000000000000001").header("Authorization", "Bearer good")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"Паркинг\",\"tags\":[\"паркинг\"],\"text\":\"Нов текст\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.text").value("Нов текст"));
+        mvc.perform(put("/api/admin/knowledge/66f000000000000000000001").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"text\":\"x\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void editErrorsAreCodes() throws Exception {
+        when(knowledgeService.update(eq("40_robbers"), eq("missing"), any())).thenReturn(Optional.empty());
+        when(knowledgeService.update(eq("40_robbers"), eq("empty"), any()))
+                .thenThrow(new KnowledgeService.InvalidKnowledgeException("TEXT_REQUIRED"));
+        when(knowledgeService.update(eq("40_robbers"), eq("gemini"), any()))
+                .thenThrow(new KnowledgeService.EmbeddingFailedException(new RuntimeException("503")));
+
+        String body = "{\"text\":\"x\"}";
+        mvc.perform(put("/api/admin/knowledge/missing").header("Authorization", "Bearer good")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.error").value("NOT_FOUND"));
+        mvc.perform(put("/api/admin/knowledge/empty").header("Authorization", "Bearer good")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error").value("TEXT_REQUIRED"));
+        mvc.perform(put("/api/admin/knowledge/gemini").header("Authorization", "Bearer good")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.error").value("EMBEDDING_FAILED"));
     }
 
     @Test

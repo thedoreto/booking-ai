@@ -15,7 +15,7 @@ export function clearToken() {
   sessionStorage.removeItem(TOKEN_KEY)
 }
 
-// Грешка с кода от booking-ai (INVALID_CREDENTIALS, TOO_MANY_ATTEMPTS, UNAUTHORIZED) или NETWORK
+// Грешка с кода от booking-ai (INVALID_CREDENTIALS, TOO_MANY_ATTEMPTS, UNAUTHORIZED, TEXT_REQUIRED…) или NETWORK
 export class ApiError extends Error {
   constructor(code) {
     super(code)
@@ -55,4 +55,13 @@ export function me(token) {
 // Знанията на хотела: [{ id, title, category, tags, source, text }]
 export function knowledge(token) {
   return request('/knowledge', authorized(token))
+}
+
+// Промяна на знание: { title, category, tags, source, text } → новият документ
+export function updateKnowledge(token, id, changes) {
+  return request(`/knowledge/${encodeURIComponent(id)}`, {
+    ...authorized(token),
+    method: 'PUT',
+    body: JSON.stringify(changes),
+  })
 }
