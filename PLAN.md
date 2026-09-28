@@ -38,7 +38,7 @@
   - [x] Бутоните: `label: { bg, en }` в самия бутон; `/api/shortcuts` връща `{ shortcutId, label, category }` на избрания език – 2026-09-27. **Преди deploy:** заявката (Aggregations + `$merge`), която прави `label` на обект, се пуска заедно с новия booking-ai – иначе бутоните не се показват.
   - [x] Типовете стаи от бекенда – превеждат се по текст от `translations` – 2026-09-27.
   - [x] **`translations_<hotelId>`** – преводи на хотела с предимство пред общите (`TranslationService.forRequest` → `Texts`); типовете стаи – и в общата, и при хотела; план: `TRANSLATIONS_HOTEL_PLAN.md` – 2026-09-28.
-  - [ ] Знанията по бутон – превод в документа в `knowledge_<hotelId>`; без превод с Gemini.
+  - [x] Знанията по бутон – `translations` в документа в `knowledge_<hotelId>`; Gemini превежда само по бутон в админ панела, не в чата – 2026-09-28.
   - [ ] Езикът – и в логовете.
   - [ ] **Валутата да е настройка на хотела** (решено 2026-09-27): сега „лв.“/„BGN“ е вътре в текстовете (`booking.confirmedRoom`, `booking.total`, `ui.pricePerNight`, `ui.bookButton`, `ui.price`); да стане `{currency}` от `hotel_settings`, а форматът на сумата – по езика.
 - [ ] **Тестове** – в трите проекта. На 2026-09-26: booking-ai – unit тестове без облак за `log`, бутоните, `ChatUser`, `RoomBookingService`, `KnowledgeRepository`; booking-system – първите (`GlobalKafkaConsumerTest`, `HotelServiceImagesTest`); booking-ui – Vitest за снимките (4). Освен тях booking-ai има само `contextLoads`, който иска истински Mongo, Kafka и Gemini. Unit тестове за услугите (`RoomBookingService`, `RoomTypeService`, `HotelService` – наличност, отказ, нощувки) + вариантът без облак отдолу (embedded Kafka + fake чат модел).

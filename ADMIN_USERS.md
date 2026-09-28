@@ -58,8 +58,17 @@ Vite + React + MUI в `admin-ui/`; booking-ai я сервира на `/admin/` (
 | `GET /api/admin/me` с `Authorization: Bearer <token>` | Кой е влязъл (дали токенът още важи) | `200 { hotelId, email, name }`; `401 { error: "UNAUTHORIZED" }` |
 | `GET /api/admin/knowledge` с `Authorization: Bearer <token>` | Знанията на хотела от токена, по категория и заглавие; `usedBy` – бутоните, които ги ползват (и неактивните) | `200 [{ id, title, category, tags, source, text, usedBy: [{ shortcutId, label }] }]`; `401` |
 | `POST /api/admin/knowledge` `{ title, category, tags, source, text }` | Ново знание; embedding (Gemini) – винаги | `201` новият документ; `400`; `503 EMBEDDING_FAILED` – нищо не е записано |
+| `GET /api/admin/settings` | Езиците на хотела | `200 { languages: [{ code, name }], defaultLanguage }` |
+| `POST /api/admin/knowledge/{id}/translations/{език}/suggest` | Предложение за превод от Gemini – **не се записва** | `200 { language, text }`; `400 UNKNOWN_LANGUAGE`; `404`; `503 TRANSLATION_FAILED` |
+| `PUT /api/admin/knowledge/{id}/translations/{език}` `{ text }` | Записва превода на един език; другите не се пипат | `200` документът; `400 TEXT_REQUIRED` / `TEXT_TOO_LONG` / `UNKNOWN_LANGUAGE`; `404` |
+| `POST /api/admin/knowledge/{id}/translate-all` | Gemini превежда основния текст на всички езици на хотела и ги записва (заменя и ръчните поправки) | `200` документът; `400 NO_LANGUAGES`; `404`; `503 TRANSLATION_FAILED` – нищо не е записано |
 | `DELETE /api/admin/knowledge/{id}` | Изтриване. **Знание, което се ползва от бутон, не се трие** – първо се сменя бутонът | `204`; `404 NOT_FOUND`; `409 { error: "IN_USE", usedBy: [...] }` |
 | `PUT /api/admin/knowledge/{id}` `{ title, category, tags, source, text }` | Редакция. Празните `title`, `category`, `source`, `tags` махат полето; `metadata` не се пипа. Нов embedding (Gemini) – само ако текстът е друг | `200` новият документ; `400 TEXT_REQUIRED` / `TEXT_TOO_LONG` (над 10 000 знака); `404 NOT_FOUND`; `503 EMBEDDING_FAILED` – Gemini не отговори, нищо не е записано |
+
+## Преводите на знанията
+- `text` е на езика по подразбиране на хотела – от него са embedding-ът и RAG (въпросите в чата работят на всеки език и без преводи – Gemini отговаря на езика на чата). `translations: { en: "...", ... }` са само за **бутоните** със знание: бутонът връща превода на езика на чата, без превод – `text`.
+- Езиците на хотела добавя админът на AI асистента (засега в `hotel_settings`), а преводите поддържа админът на хотела: „Добави на …“ (предложение от Gemini, което той поправя и записва), „Редактирай“ за един език, „Преведи на всички езици“. Промяна на основния текст **не** сменя преводите сама.
+- Gemini превежда само по бутон в админа, никога в чата; не се брои в лимита на чата.
 
 Всички адреси под `/api/admin/` освен `/login` минават през `AdminAuthInterceptor` – нов адрес е защитен по подразбиране.
 

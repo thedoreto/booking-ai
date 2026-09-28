@@ -44,8 +44,17 @@
 - `admin-ui`: „Добави знание“ (същата форма), „бутони: N“ в реда, „Ползва се от бутоните: …“ в отворения документ, „Изтрий“ с потвърждение – изключен с обяснение, ако знанието се ползва; при `IN_USE` от сървъра (междувременно добавено в бутон) – съобщение и обновен `usedBy`.
 - Тестове: `AdminKnowledgeServiceTest` (4), `AdminWebConfigTest` (пренаписан – 10), `KnowledgeServiceTest` (+3), `KnowledgeRepositoryTest` (+1), `ShortcutRepositoryTest` (+1).
 
+### Преводи на знанията за бутоните (не е комитнато)
+- **Решено:** RAG не се пипа – `text` остава основният (езикът по подразбиране на хотела), embedding-ът е само от него, въпросите в чата и сега работят на всеки език. Нов `translations: { en, de, … }` в същия документ – само за бутоните (без LLM). Отхвърлени: отделни документи по език (различни id в бутоните, дубли във vector search); `text: { bg, en }` (пипа RAG); автоматичен превод при всяка промяна и следене на остарели преводи (сложно).
+- Езиците на хотела добавя админът на AI асистента; преводите поддържа админът на хотела: „Добави на …“ (предложение от Gemini, поправя и записва), „Редактирай“ за един език, „Преведи на всички езици“ (с потвърждение – заменя ръчните поправки). Промяна на основния текст не пипа преводите.
+- Чат: `KnowledgeService.textsByIds(hotelId, ids, език)` – преводът на езика от `TenantContext` или `text`.
+- `KnowledgeTranslator` – собствен Gemini модел (JSON отговор, temperature 0.2, `RetryingChatLanguageModel`), едно извикване за всички езици; липсващ език, не-JSON или грешка → `TranslationFailedException` (503), нищо не се записва. Не е бинът на чата – без tools, памет, `GeminiUsageTracker` и `GeminiBudget`.
+- Адреси: `GET /api/admin/settings`, `POST …/translations/{език}/suggest`, `PUT …/translations/{език}`, `POST …/translate-all`; `KnowledgeRepository.setTranslations` (`$set translations.<език>`, другите езици остават), `KnowledgeService.findById`, `setTranslations`.
+- `admin-ui`: chip „без EN“ в реда, раздел „Преводи“ в отворения документ (`TranslationsSection`).
+- Тестове: `KnowledgeTranslatorTest` (3), `AdminKnowledgeServiceTest` (+5), `AdminWebConfigTest` (+3), `KnowledgeServiceTest` (+2), `KnowledgeRepositoryTest` (+1).
+
 ### Проверено
-- booking-ai: всички тестове без облак – 217 (след добавянето и изтриването); 205 след редакцията; 196 след прегледа на знанията; преди тях – 192; `AdminPasswordHash` през `exec:java` връща BCrypt хеш; `mvn clean package` – jar-ът съдържа `static/admin/index.html` и `assets/`; ESLint за `admin-ui` без забележки.
+- booking-ai: всички тестове без облак – 231 (след преводите); 217 след добавянето и изтриването; 205 след редакцията; 196 след прегледа на знанията; преди тях – 192; `AdminPasswordHash` през `exec:java` връща BCrypt хеш; `mvn clean package` – jar-ът съдържа `static/admin/index.html` и `assets/`; ESLint за `admin-ui` без забележки.
 
 ## Сесия 2026-09-28 – модел и repository за всяка колекция, преводи на хотела
 

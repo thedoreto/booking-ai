@@ -28,5 +28,6 @@ Env променливата в Render е по-силна от стойност�
 |---|---|---|
 | Модел за embeddings (RAG и знанията; в админ панела – при ново знание и при редакция само ако текстът е променен) | `gemini-embedding-001` | `AiConfig` |
 | Повторни опити при 503 от Gemini | след 2s, 5s и 10s | `AiConfig` → `RetryingChatLanguageModel` |
+| Превод на знанията (само по бутон в админ панела) – моделът от `gemini.base.model`, JSON отговор, temperature 0.2, повторни опити при 503 след 2s и 5s; не се брои в лимита на чата | – | `KnowledgeTranslator` |
 | Най-дълго текстово съобщение | 500 знака (колкото логовете) | `AiLangChainController.MAX_MESSAGE_LENGTH` |
 | Памет на разговора | 10 съобщения, най-много 5000 разговора в RAM | `LangChainConfig` |
