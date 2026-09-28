@@ -34,3 +34,6 @@ build/
 
 ### Настройки с тайни – само локално, никога в git ###
 src/main/resources/application.properties
+
+### Админ панел ###
+admin-ui/node_modules/

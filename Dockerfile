@@ -4,6 +4,8 @@ WORKDIR /app
 COPY pom.xml .
 RUN mvn -q -e -DskipTests dependency:go-offline
 COPY src ./src
+# Админ панелът – билдва се от Maven (frontend-maven-plugin) при package
+COPY admin-ui ./admin-ui
 RUN mvn -q -DskipTests package
 
 # Run stage (лек контейнер само с Java)
