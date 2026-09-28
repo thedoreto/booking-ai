@@ -30,10 +30,10 @@ class KafkaServiceTest {
         when(kafkaTemplate.send(anyString(), anyString(), anyString())).thenReturn(new CompletableFuture<>());
         KafkaService service = new KafkaService(kafkaTemplate, objectMapper);
 
-        service.send("hotel-requests-topic", "seven_stars", Map.of("event", "get_room_types", "hotelId", "seven_stars"));
+        service.send("hotel-requests-seven_stars", "seven_stars", Map.of("event", "get_room_types", "hotelId", "seven_stars"));
 
         ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
-        verify(kafkaTemplate).send(eq("hotel-requests-topic"), eq("seven_stars"), json.capture());
+        verify(kafkaTemplate).send(eq("hotel-requests-seven_stars"), eq("seven_stars"), json.capture());
         assertThat(objectMapper.readValue(json.getValue(), Map.class))
                 .isEqualTo(Map.of("event", "get_room_types", "hotelId", "seven_stars"));
     }
@@ -45,7 +45,7 @@ class KafkaServiceTest {
         KafkaService service = new KafkaService(kafkaTemplate, objectMapper);
 
         // Заявката после изтича (timeout в HotelBackendClient), но send не хвърля
-        assertThatCode(() -> service.send("hotel-requests-topic", "seven_stars", Map.of("event", "x")))
+        assertThatCode(() -> service.send("hotel-requests-seven_stars", "seven_stars", Map.of("event", "x")))
                 .doesNotThrowAnyException();
     }
 
@@ -55,7 +55,7 @@ class KafkaServiceTest {
         when(broken.writeValueAsString(any())).thenThrow(new JsonProcessingException("not json") {});
         KafkaService service = new KafkaService(kafkaTemplate, broken);
 
-        assertThatCode(() -> service.send("hotel-requests-topic", "seven_stars", Map.of("event", "x")))
+        assertThatCode(() -> service.send("hotel-requests-seven_stars", "seven_stars", Map.of("event", "x")))
                 .doesNotThrowAnyException();
         verify(kafkaTemplate, never()).send(anyString(), anyString(), anyString());
     }

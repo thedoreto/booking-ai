@@ -32,8 +32,8 @@ class HotelBackendClientTest {
         // Бекендът отговаря веднага: първо на чужда заявка, после на нашата
         replyWith(message -> {
             sent.set(message);
-            reply(Map.of("correlationId", "someone-else", "data", List.of("чужд")));
-            reply(Map.of("correlationId", message.get("correlationId"), "data", List.of(Map.of("code", "SINGLE"))));
+            reply("seven_stars", Map.of("correlationId", "someone-else", "data", List.of("чужд")));
+            reply("seven_stars", Map.of("correlationId", message.get("correlationId"), "data", List.of(Map.of("code", "SINGLE"))));
         });
 
         Object data = client.request("seven_stars", "get_room_types", Map.of("token", "t-1"));
@@ -43,14 +43,24 @@ class HotelBackendClientTest {
                 .containsEntry("hotelId", "seven_stars")
                 .containsEntry("event", "get_room_types")
                 .containsEntry("token", "t-1")
-                .containsEntry("replyTo", "hotel-replies-topic")
-                .containsKey("correlationId");
-        verify(kafkaService).send(eq("hotel-requests-topic"), eq("seven_stars"), any());
+                .containsKey("correlationId")
+                // Бекендът сам знае своя топик за отговори
+                .doesNotContainKey("replyTo");
+        verify(kafkaService).send(eq("hotel-requests-seven_stars"), eq("seven_stars"), any());
+    }
+
+    @Test
+    void replyFromTheTopicOfAnotherHotelIsIgnored() {
+        // Отговор със същия correlationId, но от бекенда на друг хотел – не се приема; заявката изтича (5s)
+        replyWith(message -> reply("40_robbers", Map.of("correlationId", message.get("correlationId"), "data", "чужд")));
+
+        assertThatThrownBy(() -> client.request("seven_stars", "get_upcoming_bookings", Map.of()))
+                .isInstanceOf(TimeoutException.class);
     }
 
     @Test
     void errorInTheReplyBecomesHotelBackendException() {
-        replyWith(message -> reply(Map.of("correlationId", message.get("correlationId"), "error", "Room not available")));
+        replyWith(message -> reply("seven_stars", Map.of("correlationId", message.get("correlationId"), "error", "Room not available")));
 
         assertThatThrownBy(() -> client.request("seven_stars", "create_booking", Map.of()))
                 .isInstanceOf(HotelBackendException.class)
@@ -67,13 +77,13 @@ class HotelBackendClientTest {
                 .isInstanceOf(TimeoutException.class);
 
         // Късен отговор не хвърля и не пречи
-        reply(Map.of("correlationId", correlationId.get(), "data", "late"));
+        reply("seven_stars", Map.of("correlationId", correlationId.get(), "data", "late"));
     }
 
     @Test
     void brokenReplyIsSkipped() {
-        client.listenForReplies(new ConsumerRecord<>("hotel-replies-topic", 0, 0, null, "not json"));
-        reply(Map.of("data", "без correlationId"));
+        client.listenForReplies(new ConsumerRecord<>("hotel-replies-seven_stars", 0, 0, null, "not json"));
+        reply("seven_stars", Map.of("data", "без correlationId"));
     }
 
     @SuppressWarnings("unchecked")
@@ -84,10 +94,11 @@ class HotelBackendClientTest {
         }).when(kafkaService).send(anyString(), anyString(), any());
     }
 
-    private void reply(Map<String, Object> payload) {
+    // Отговор от бекенда на хотела – в неговия топик hotel-replies-<hotelId>
+    private void reply(String hotelId, Map<String, Object> payload) {
         try {
             String json = objectMapper.writeValueAsString(payload);
-            client.listenForReplies(new ConsumerRecord<>("hotel-replies-topic", 0, 0, null, json));
+            client.listenForReplies(new ConsumerRecord<>("hotel-replies-" + hotelId, 0, 0, null, json));
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
