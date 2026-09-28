@@ -9,6 +9,7 @@ import com.hotel.langchain.service.HotelBackendClient;
 import com.hotel.langchain.service.HotelBackendClient.HotelBackendException;
 import com.hotel.langchain.service.RoomBookingService;
 import com.hotel.langchain.service.RoomTypeService;
+import com.hotel.langchain.service.Texts;
 import com.hotel.langchain.service.TranslationService;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -38,9 +39,14 @@ public class HotelTools {
         this.translations = translations;
     }
 
-    // Текстът на езика на заявката (TenantContext) – отива директно в UI (бутон) или при Gemini
+    // Текстовете на хотела и езика на заявката – tools се викат само от /api/chat, където TenantContext е зададен.
+    // Отиват директно в UI (бутон) или при Gemini.
+    private Texts texts() {
+        return translations.forRequest(TenantContext.getHotelId(), TenantContext.getLanguage());
+    }
+
     private String message(String key) {
-        return translations.message(key, TenantContext.getLanguage());
+        return texts().message(key);
     }
 
     @Tool("Показва на потребителя предстоящите му резервации като картички с бутон „Откажи“. " +
@@ -97,7 +103,7 @@ public class HotelTools {
         if (types.isEmpty()) {
             return message("tools.roomTypesUnavailable");
         }
-        return translations.message("tools.roomTypes", TenantContext.getLanguage(), Map.of("types",
+        return texts().message("tools.roomTypes", Map.of("types",
                 types.stream().map(RoomTypeService.RoomType::name).collect(Collectors.joining(", "))));
     }
 
@@ -147,18 +153,18 @@ public class HotelTools {
 
     // Текст за модела при грешка от бекенда (key – съобщение с {error}); записва и вида на грешката за логовете на чата
     private String toolError(String key, Exception e) {
-        String language = TenantContext.getLanguage();
+        Texts texts = texts();
         if (e instanceof HotelBackendException) {
             TenantContext.reportToolError(ChatLogEntry.BACKEND_ERROR);
-            return translations.message(key, language, Map.of("error", roomBookingService.backendErrorText(e.getMessage(), language)));
+            return texts.message(key, Map.of("error", roomBookingService.backendErrorText(e.getMessage(), texts)));
         }
         if (e instanceof TimeoutException || e instanceof InterruptedException) {
             TenantContext.reportToolError(ChatLogEntry.BACKEND_TIMEOUT);
-            return message("common.backendUnavailable");
+            return texts.message("common.backendUnavailable");
         }
         System.err.println("Tool failed: " + e);
         TenantContext.reportToolError(ChatLogEntry.INTERNAL);
-        return translations.message(key, language, Map.of("error", message("backendError.technical")));
+        return texts.message(key, Map.of("error", texts.message("backendError.technical")));
     }
 
     // Моделът понякога връща дата и във вид 30.09.2026 или 2026-9-30 вместо YYYY-MM-DD

@@ -39,18 +39,19 @@ public class RoomBookingService {
         this.translations = translations;
     }
 
-    // language – кодът на езика на отговора (HotelLanguages.resolve); текстовете са в колекция translations
+    // language – кодът на езика на отговора (HotelLanguages.resolve); текстовете – TranslationService.forRequest
     public UiAction findAvailableRooms(String hotelId, String startDateStr, String endDateStr, String roomTypeStr,
                                        String language) {
+        Texts texts = translations.forRequest(hotelId, language);
         LocalDate startDate;
         LocalDate endDate;
         try {
             startDate = LocalDate.parse(startDateStr);
             endDate = LocalDate.parse(endDateStr);
         } catch (DateTimeParseException | NullPointerException e) {
-            return rejected(translations.message("rooms.invalidDates", language));
+            return rejected(texts.message("rooms.invalidDates"));
         }
-        String periodError = validatePeriod(startDate, endDate, language);
+        String periodError = validatePeriod(startDate, endDate, texts);
         if (periodError != null) {
             return rejected(periodError);
         }
@@ -65,14 +66,14 @@ public class RoomBookingService {
                 params.put("roomType", roomType);
             }
             Object rooms = backendClient.request(hotelId, "get_available_rooms_by_dates", params);
-            String period = period(startDate, endDate, language);
+            String period = period(startDate, endDate, texts);
             String what = roomType != null
-                    ? translations.message("rooms.ofType", language, Map.of("type", roomTypeName(hotelId, roomType, language)))
-                    : translations.message("rooms.any", language);
+                    ? texts.message("rooms.ofType", Map.of("type", roomTypeName(hotelId, roomType, texts)))
+                    : texts.message("rooms.any");
 
             if (!(rooms instanceof List<?> roomList) || roomList.isEmpty()) {
-                return noResult(translations.message(roomType != null ? "rooms.noneAvailableOfType" : "rooms.noneAvailable",
-                        language, Map.of("period", period, "rooms", what)));
+                return noResult(texts.message(roomType != null ? "rooms.noneAvailableOfType" : "rooms.noneAvailable",
+                        Map.of("period", period, "rooms", what)));
             }
             Map<String, Object> data = new HashMap<>();
             data.put("startDate", startDate.toString());
@@ -83,24 +84,25 @@ public class RoomBookingService {
             }
             return new UiAction(
                     SELECT_ROOMS_ACTION,
-                    translations.message("rooms.available", language, Map.of("rooms", what, "period", period)),
+                    texts.message("rooms.available", Map.of("rooms", what, "period", period)),
                     data);
         } catch (HotelBackendException e) {
-            return backendError(translations.message("rooms.searchError", language,
-                    Map.of("error", backendErrorText(e.getMessage(), language))));
+            return backendError(texts.message("rooms.searchError",
+                    Map.of("error", backendErrorText(e.getMessage(), texts))));
         } catch (TimeoutException | InterruptedException e) {
-            return backendTimeout(translations.message("common.backendUnavailable", language));
+            return backendTimeout(texts.message("common.backendUnavailable"));
         }
     }
 
     // user – влезлият потребител; токенът му отива през Kafka и booking-system взима потребителя от него
     public UiAction createBookings(String hotelId, ChatUser user, String startDateStr, String endDateStr,
                                    List<String> roomIds, String language) {
+        Texts texts = translations.forRequest(hotelId, language);
         if (user == null) {
-            return rejected(translations.message("booking.loginRequired", language));
+            return rejected(texts.message("booking.loginRequired"));
         }
         if (roomIds == null || roomIds.isEmpty()) {
-            return rejected(translations.message("booking.noRoomSelected", language));
+            return rejected(texts.message("booking.noRoomSelected"));
         }
         LocalDate startDate;
         LocalDate endDate;
@@ -108,9 +110,9 @@ public class RoomBookingService {
             startDate = LocalDate.parse(startDateStr);
             endDate = LocalDate.parse(endDateStr);
         } catch (DateTimeParseException | NullPointerException e) {
-            return rejected(translations.message("booking.invalidDates", language));
+            return rejected(texts.message("booking.invalidDates"));
         }
-        String periodError = validatePeriod(startDate, endDate, language);
+        String periodError = validatePeriod(startDate, endDate, texts);
         if (periodError != null) {
             return rejected(periodError);
         }
@@ -122,90 +124,93 @@ public class RoomBookingService {
                     "startDate", startDate.toString(),
                     "endDate", endDate.toString()
             ));
-            String reply = confirmationText(bookings, startDate, endDate, language);
+            String reply = confirmationText(bookings, startDate, endDate, texts);
             chatHistoryService.record(hotelId, user, "Резервирай " + roomNumbersText(bookings) + " от "
                     + startDate.format(BG_DATE) + " до " + endDate.format(BG_DATE) + ".", reply);
             return new UiAction(BOOKING_CONFIRMED_ACTION, reply, bookings);
         } catch (HotelBackendException e) {
-            return backendError(translations.message("booking.error", language,
-                    Map.of("error", backendErrorText(e.getMessage(), language))));
+            return backendError(texts.message("booking.error",
+                    Map.of("error", backendErrorText(e.getMessage(), texts))));
         } catch (TimeoutException | InterruptedException e) {
             // Не знаем дали бекендът я е записал – потребителят трябва да провери
-            return backendTimeout(translations.message("booking.timeout", language));
+            return backendTimeout(texts.message("booking.timeout"));
         }
     }
 
     // Предстоящите потвърдени резервации на потребителя – за картичките с бутон „Откажи“
     public UiAction myBookings(String hotelId, ChatUser user, String language) {
+        Texts texts = translations.forRequest(hotelId, language);
         if (user == null) {
-            return rejected(translations.message("myBookings.loginRequired", language));
+            return rejected(texts.message("myBookings.loginRequired"));
         }
         try {
             Object bookings = backendClient.request(hotelId, "get_upcoming_bookings", Map.of("token", user.token()));
             if (!(bookings instanceof List<?> list) || list.isEmpty()) {
-                return noResult(translations.message("myBookings.none", language));
+                return noResult(texts.message("myBookings.none"));
             }
-            return new UiAction(MY_BOOKINGS_ACTION, translations.message("myBookings.list", language),
+            return new UiAction(MY_BOOKINGS_ACTION, texts.message("myBookings.list"),
                     Map.of("bookings", list));
         } catch (HotelBackendException e) {
-            return backendError(translations.message("myBookings.error", language,
-                    Map.of("error", backendErrorText(e.getMessage(), language))));
+            return backendError(texts.message("myBookings.error",
+                    Map.of("error", backendErrorText(e.getMessage(), texts))));
         } catch (TimeoutException | InterruptedException e) {
-            return backendTimeout(translations.message("common.backendUnavailable", language));
+            return backendTimeout(texts.message("common.backendUnavailable"));
         }
     }
 
     public UiAction cancelBooking(String hotelId, ChatUser user, String bookingId, String language) {
+        Texts texts = translations.forRequest(hotelId, language);
         if (user == null) {
-            return rejected(translations.message("cancel.loginRequired", language));
+            return rejected(texts.message("cancel.loginRequired"));
         }
         if (bookingId == null || bookingId.isBlank()) {
-            return rejected(translations.message("cancel.noBookingSelected", language));
+            return rejected(texts.message("cancel.noBookingSelected"));
         }
         try {
             Object booking = backendClient.request(hotelId, "cancel_booking", Map.of(
                     "token", user.token(),
                     "bookingId", bookingId
             ));
-            String description = describeBooking(hotelId, booking, language);
-            String reply = translations.message("cancel.done", language, Map.of("booking", description));
+            String description = describeBooking(hotelId, booking, texts);
+            String reply = texts.message("cancel.done", Map.of("booking", description));
             chatHistoryService.record(hotelId, user, "Откажи резервацията " + description + ".", reply);
             return new UiAction(BOOKING_CANCELED_ACTION, reply, booking);
         } catch (HotelBackendException e) {
-            return backendError(translations.message("cancel.error", language,
-                    Map.of("error", backendErrorText(e.getMessage(), language))));
+            return backendError(texts.message("cancel.error",
+                    Map.of("error", backendErrorText(e.getMessage(), texts))));
         } catch (TimeoutException | InterruptedException e) {
             // Не знаем дали бекендът я е отказал – потребителят трябва да провери
-            return backendTimeout(translations.message("cancel.timeout", language));
+            return backendTimeout(texts.message("cancel.timeout"));
         }
     }
 
     // „за стая №12 (Двойна стая) от 30.10.2026 до 03.11.2026“
-    private String describeBooking(String hotelId, Object booking, String language) {
+    private String describeBooking(String hotelId, Object booking, Texts texts) {
         if (!(booking instanceof Map<?, ?> map)) {
             return "";
         }
-        StringBuilder text = new StringBuilder(translations.message("cancel.bookingDescription", language,
+        StringBuilder text = new StringBuilder(texts.message("cancel.bookingDescription",
                 Map.of("number", String.valueOf(map.get("roomNumber")))));
         if (map.get("roomType") != null) {
-            text.append(" (").append(roomTypeName(hotelId, String.valueOf(map.get("roomType")), language)).append(")");
+            text.append(" (").append(roomTypeName(hotelId, String.valueOf(map.get("roomType")), texts)).append(")");
         }
         LocalDate checkIn = parseDateOrNull(map.get("checkInDate"));
         LocalDate checkOut = parseDateOrNull(map.get("checkOutDate"));
         if (checkIn != null && checkOut != null) {
-            text.append(" ").append(period(checkIn, checkOut, language));
+            text.append(" ").append(period(checkIn, checkOut, texts));
         }
         return text.toString();
     }
 
-    // Името на типа стая от бекенда на хотела, преведено на езика (translations); без превод – както е дошло
-    private String roomTypeName(String hotelId, String code, String language) {
-        return translations.translate(roomTypeService.nameOf(hotelId, code), language);
+    // Името на типа стая от бекенда на хотела, преведено на езика (translations_<hotelId>, после translations);
+    // без превод – както е дошло
+    private String roomTypeName(String hotelId, String code, Texts texts) {
+        return texts.translate(roomTypeService.nameOf(hotelId, code));
     }
 
     // „от 30.10.2026 до 03.11.2026“
-    private String period(LocalDate startDate, LocalDate endDate, String language) {
-        return translations.message("common.period", language,
+    private String period(LocalDate startDate, LocalDate endDate, Texts texts) {
+        return texts.message("common.period",
                 Map.of("start", startDate.format(BG_DATE), "end", endDate.format(BG_DATE)));
     }
 
@@ -217,32 +222,32 @@ public class RoomBookingService {
         }
     }
 
-    private String validatePeriod(LocalDate startDate, LocalDate endDate, String language) {
+    private String validatePeriod(LocalDate startDate, LocalDate endDate, Texts texts) {
         if (!startDate.isBefore(endDate)) {
-            return translations.message("rooms.checkOutBeforeCheckIn", language);
+            return texts.message("rooms.checkOutBeforeCheckIn");
         }
         if (startDate.isBefore(LocalDate.now())) {
-            return translations.message("rooms.checkInInPast", language);
+            return texts.message("rooms.checkInInPast");
         }
         return null;
     }
 
-    private String confirmationText(Object bookings, LocalDate startDate, LocalDate endDate, String language) {
-        StringBuilder text = new StringBuilder(translations.message("booking.confirmed", language,
-                Map.of("period", period(startDate, endDate, language))));
+    private String confirmationText(Object bookings, LocalDate startDate, LocalDate endDate, Texts texts) {
+        StringBuilder text = new StringBuilder(texts.message("booking.confirmed",
+                Map.of("period", period(startDate, endDate, texts))));
         double total = 0;
         if (bookings instanceof List<?> list) {
             for (Object item : list) {
                 if (item instanceof Map<?, ?> booking) {
                     Object price = booking.get("totalPrice");
-                    text.append("\n").append(translations.message("booking.confirmedRoom", language, Map.of(
+                    text.append("\n").append(texts.message("booking.confirmedRoom", Map.of(
                             "number", String.valueOf(booking.get("roomNumber")),
                             "price", String.format("%.2f", toDouble(price)))));
                     total += toDouble(price);
                 }
             }
         }
-        return text.append("\n").append(translations.message("booking.total", language,
+        return text.append("\n").append(texts.message("booking.total",
                 Map.of("total", String.format("%.2f", total)))).toString();
     }
 
@@ -258,8 +263,8 @@ public class RoomBookingService {
     }
 
     // booking-system връща причините като кодове на английски (ResponseStatusException reason) –
-    // текстът за потребителя е в translations (ползва се и от HotelTools); непознат код – както е дошъл
-    public String backendErrorText(String reason, String language) {
+    // текстът за потребителя е в преводите (ползва се и от HotelTools); непознат код – както е дошъл
+    public String backendErrorText(String reason, Texts texts) {
         String key = switch (reason == null ? "" : reason) {
             case "Room not available" -> "backendError.roomNotAvailable";
             case "User not found" -> "backendError.userNotFound";
@@ -273,7 +278,7 @@ public class RoomBookingService {
             case "Cancellation deadline passed" -> "backendError.cancellationDeadlinePassed";
             default -> null;
         };
-        return key != null ? translations.message(key, language) : reason;
+        return key != null ? texts.message(key) : reason;
     }
 
     private double toDouble(Object value) {
