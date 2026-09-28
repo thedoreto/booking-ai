@@ -36,11 +36,16 @@
 ### Админ панел – редакция на знанията (не е комитнато)
 - `PUT /api/admin/knowledge/{id}`: `KnowledgeService.update` – текстът е задължителен, до 10 000 знака; нов embedding (`gemini-embedding-001`, от `text`, както досегашните ръчни) само при променен текст; при грешка от Gemini нищо не се записва (503 `EMBEDDING_FAILED`). `KnowledgeRepository.update` – `findAndModify` с `$set`/`$unset` само на `title`, `category`, `tags`, `source`, `text` (+ `embedding`), `metadata` не се пипа; отговорът е без `embedding`.
 - `admin-ui`: „Редактирай“ в отворения документ → `KnowledgeEditor` (заглавие, категория с подсказки, източник, етикети като chips, текст с брояч); при променен текст – бележка за новия embedding.
-- Без добавяне и изтриване – следваща стъпка, с проверка кои бутони (`knowledgeIds`) ползват знанието.
 - Тестове: `KnowledgeServiceTest` (+5), `KnowledgeRepositoryTest` (+2), `AdminWebConfigTest` (+2).
 
+### Админ панел – добавяне и изтриване на знания (не е комитнато)
+- `AdminKnowledgeService` (между контролера и `KnowledgeService`): за всяко знание `usedBy` – бутоните с него в `action.knowledgeIds` (`ShortcutRepository.findKnowledgeShortcuts`, и неактивните), етикетът на езика по подразбиране на хотела, без етикет – `shortcutId`. **Решено:** винаги се показва дали знанието се ползва от бутон, а такова знание не се трие (409 `IN_USE`).
+- `POST /api/admin/knowledge` (`KnowledgeService.create` – embedding винаги, при грешка от Gemini нищо не се записва), `DELETE /api/admin/knowledge/{id}` (204 / 404 / 409); `KnowledgeRepository.insert`, `delete`.
+- `admin-ui`: „Добави знание“ (същата форма), „бутони: N“ в реда, „Ползва се от бутоните: …“ в отворения документ, „Изтрий“ с потвърждение – изключен с обяснение, ако знанието се ползва; при `IN_USE` от сървъра (междувременно добавено в бутон) – съобщение и обновен `usedBy`.
+- Тестове: `AdminKnowledgeServiceTest` (4), `AdminWebConfigTest` (пренаписан – 10), `KnowledgeServiceTest` (+3), `KnowledgeRepositoryTest` (+1), `ShortcutRepositoryTest` (+1).
+
 ### Проверено
-- booking-ai: всички тестове без облак – 205 (след редакцията); 196 след прегледа на знанията; преди тях – 192; `AdminPasswordHash` през `exec:java` връща BCrypt хеш; `mvn clean package` – jar-ът съдържа `static/admin/index.html` и `assets/`; ESLint за `admin-ui` без забележки.
+- booking-ai: всички тестове без облак – 217 (след добавянето и изтриването); 205 след редакцията; 196 след прегледа на знанията; преди тях – 192; `AdminPasswordHash` през `exec:java` връща BCrypt хеш; `mvn clean package` – jar-ът съдържа `static/admin/index.html` и `assets/`; ESLint за `admin-ui` без забележки.
 
 ## Сесия 2026-09-28 – модел и repository за всяка колекция, преводи на хотела
 
