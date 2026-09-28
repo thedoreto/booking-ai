@@ -61,6 +61,16 @@ public class KnowledgeRepository {
         return mongoTemplate.find(query, KnowledgeDocument.class, collection(hotelId));
     }
 
+    // Нов документ (с embedding); връща го със _id
+    public KnowledgeDocument insert(String hotelId, KnowledgeDocument document) {
+        return mongoTemplate.insert(document, collection(hotelId));
+    }
+
+    // true – документът е изтрит; false – няма такъв
+    public boolean delete(String hotelId, ObjectId id) {
+        return mongoTemplate.remove(new Query(Criteria.where("_id").is(id)), collection(hotelId)).getDeletedCount() > 0;
+    }
+
     // Сменя title, category, tags, source и text на документа (празно/null – полето се маха); embedding – само ако не е null.
     // Останалото в документа (metadata…) не се пипа. Връща новия документ без embedding; празно – няма такъв документ.
     public Optional<KnowledgeDocument> update(String hotelId, ObjectId id, KnowledgeDocument changes, List<Double> embedding) {

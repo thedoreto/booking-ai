@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Chip, CircularProgress, InputAdornment, TextField, Typography,
+  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Dialog,
+  DialogActions, DialogContent, DialogContentText, DialogTitle, InputAdornment, TextField, Tooltip, Typography,
 } from '@mui/material'
-import { getToken, knowledge } from './api.js'
+import { deleteKnowledge, getToken, knowledge } from './api.js'
 import KnowledgeEditor from './KnowledgeEditor.jsx'
 
 const NO_CATEGORY = 'Без категория'
 
-// Знанията на хотела (knowledge_<hotelId>): групирани по категория, търсене по заглавие, текст и етикети; редакция на място
+// Знанията на хотела (knowledge_<hotelId>): групирани по категория, търсене по заглавие, текст и етикети; добавяне,
+// редакция на място и изтриване. При всяко знание пише кои бутони го ползват – такова знание не се трие.
 export default function KnowledgePage({ onUnauthorized }) {
   const [documents, setDocuments] = useState(null)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
+  const [adding, setAdding] = useState(false)
 
   useEffect(() => {
     knowledge(getToken())
@@ -31,7 +34,16 @@ export default function KnowledgePage({ onUnauthorized }) {
   const allTags = useMemo(() => distinct((documents || []).flatMap((doc) => doc.tags || [])), [documents])
 
   function handleSaved(updated) {
-    setDocuments((docs) => docs.map((doc) => (doc.id === updated.id ? updated : doc)))
+    setDocuments((docs) => sortDocuments(docs.map((doc) => (doc.id === updated.id ? updated : doc))))
+  }
+
+  function handleCreated(created) {
+    setAdding(false)
+    setDocuments((docs) => sortDocuments([...docs, created]))
+  }
+
+  function handleDeleted(id) {
+    setDocuments((docs) => docs.filter((doc) => doc.id !== id))
   }
 
   if (error) {
@@ -57,10 +69,31 @@ export default function KnowledgePage({ onUnauthorized }) {
           sx={{ flexGrow: 1, maxWidth: 400, bgcolor: 'background.paper' }}
           slotProps={{ input: { startAdornment: <InputAdornment position="start">🔍</InputAdornment> } }}
         />
-        <Typography variant="body2" color="text.secondary">
+        <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1 }}>
           {search ? `${shown} от ${documents.length}` : documents.length} документа
         </Typography>
+        <Button variant="contained" onClick={() => setAdding(true)} disabled={adding}>
+          Добави знание
+        </Button>
       </Box>
+
+      {adding && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Ново знание
+            </Typography>
+            <KnowledgeEditor
+              doc={null}
+              categories={categories}
+              allTags={allTags}
+              onSaved={handleCreated}
+              onCancel={() => setAdding(false)}
+              onUnauthorized={onUnauthorized}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {documents.length === 0 && <Alert severity="info">Хотелът още няма знания.</Alert>}
       {documents.length > 0 && shown === 0 && <Alert severity="info">Няма документи за „{search}“.</Alert>}
@@ -72,7 +105,7 @@ export default function KnowledgePage({ onUnauthorized }) {
           </Typography>
           {docs.map((doc) => (
             <KnowledgeItem key={doc.id} doc={doc} categories={categories} allTags={allTags} onSaved={handleSaved}
-              onUnauthorized={onUnauthorized} />
+              onDeleted={handleDeleted} onUnauthorized={onUnauthorized} />
           ))}
         </Box>
       ))}
@@ -80,8 +113,10 @@ export default function KnowledgePage({ onUnauthorized }) {
   )
 }
 
-function KnowledgeItem({ doc, categories, allTags, onSaved, onUnauthorized }) {
+function KnowledgeItem({ doc, categories, allTags, onSaved, onDeleted, onUnauthorized }) {
   const [editing, setEditing] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const usedBy = doc.usedBy || []
 
   return (
     <Accordion disableGutters>
@@ -91,6 +126,9 @@ function KnowledgeItem({ doc, categories, allTags, onSaved, onUnauthorized }) {
           {(doc.tags || []).map((tag) => (
             <Chip key={tag} label={tag} size="small" variant="outlined" />
           ))}
+          {usedBy.length > 0 && (
+            <Chip label={`бутони: ${usedBy.length}`} size="small" color="primary" variant="outlined" />
+          )}
         </Box>
       </AccordionSummary>
       <AccordionDetails>
@@ -109,20 +147,100 @@ function KnowledgeItem({ doc, categories, allTags, onSaved, onUnauthorized }) {
         ) : (
           <>
             <Typography sx={{ whiteSpace: 'pre-wrap', mb: 2 }}>{doc.text || '—'}</Typography>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              {usedBy.length > 0
+                ? <>Ползва се от {usedBy.length === 1 ? 'бутона' : 'бутоните'}: <strong>{labels(usedBy)}</strong></>
+                : <Box component="span" sx={{ color: 'text.secondary' }}>Не се ползва от бутон.</Box>}
+            </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
               <Typography variant="caption" color="text.secondary" component="div">
                 id: <Box component="span" sx={{ fontFamily: 'monospace', userSelect: 'all' }}>{doc.id}</Box>
                 {doc.source && <> · източник: {doc.source}</>}
               </Typography>
-              <Button size="small" variant="outlined" onClick={() => setEditing(true)}>
-                Редактирай
-              </Button>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Tooltip title={usedBy.length > 0 ? `Ползва се от: ${labels(usedBy)}. Първо го махнете от бутоните.` : ''}>
+                  <span>
+                    <Button size="small" color="error" disabled={usedBy.length > 0} onClick={() => setConfirming(true)}>
+                      Изтрий
+                    </Button>
+                  </span>
+                </Tooltip>
+                <Button size="small" variant="outlined" onClick={() => setEditing(true)}>
+                  Редактирай
+                </Button>
+              </Box>
             </Box>
+            <DeleteDialog
+              open={confirming}
+              doc={doc}
+              onClose={() => setConfirming(false)}
+              onDeleted={() => onDeleted(doc.id)}
+              onUsed={(updated) => onSaved({ ...doc, usedBy: updated })}
+              onUnauthorized={onUnauthorized}
+            />
           </>
         )}
       </AccordionDetails>
     </Accordion>
   )
+}
+
+function DeleteDialog({ open, doc, onClose, onDeleted, onUsed, onUnauthorized }) {
+  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function handleDelete() {
+    setError(null)
+    setDeleting(true)
+    try {
+      await deleteKnowledge(getToken(), doc.id)
+      onClose()
+      onDeleted()
+    } catch (e) {
+      if (e.code === 'UNAUTHORIZED') {
+        onUnauthorized()
+      } else if (e.code === 'IN_USE') {
+        // Междувременно е добавено в бутон
+        setError(`Не е изтрито – ползва се от: ${labels(e.body.usedBy || [])}.`)
+        onUsed(e.body.usedBy || [])
+      } else if (e.code === 'NOT_FOUND') {
+        onClose()
+        onDeleted()
+      } else {
+        setError('Няма връзка със сървъра. Знанието не е изтрито.')
+      }
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onClose={deleting ? undefined : onClose}>
+      <DialogTitle>Изтриване на знание</DialogTitle>
+      <DialogContent>
+        <DialogContentText>
+          „{doc.title || preview(doc.text)}“ ще бъде изтрито завинаги.
+        </DialogContentText>
+        {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={deleting}>Отказ</Button>
+        <Button color="error" variant="contained" onClick={handleDelete} disabled={deleting}>
+          {deleting ? 'Изтриване…' : 'Изтрий'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+function labels(usedBy) {
+  return usedBy.map((ref) => ref.label).join(', ')
+}
+
+// Като сървъра: по категория, после по заглавие; без категория – първи
+function sortDocuments(documents) {
+  return [...documents].sort((a, b) =>
+    (a.category || '').localeCompare(b.category || '', 'bg') || (a.title || '').localeCompare(b.title || '', 'bg'))
 }
 
 function filter(documents, search) {

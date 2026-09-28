@@ -30,6 +30,12 @@ public class ShortcutRepository {
         return mongoTemplate.findOne(query, Shortcut.class, collection(hotelId));
     }
 
+    // Всички бутони със знания (action.type knowledge), и неактивните – за админ панела: кои знания се ползват
+    public List<Shortcut> findKnowledgeShortcuts(String hotelId) {
+        return mongoTemplate.find(new Query(Criteria.where("action.type").is(Shortcut.Action.KNOWLEDGE)), Shortcut.class,
+                collection(hotelId));
+    }
+
     private static String collection(String hotelId) {
         return COLLECTION_PREFIX + hotelId;
     }

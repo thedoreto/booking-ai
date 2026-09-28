@@ -120,6 +120,40 @@ class KnowledgeServiceTest {
         verify(repository, never()).update(anyString(), any(), any(), any());
     }
 
+    @Test
+    void newKnowledgeAlwaysGetsAnEmbedding() {
+        when(embeddingModel.embed("Закуска от 7 до 10.")).thenReturn(Response.from(Embedding.from(new float[]{1f})));
+        when(repository.insert(eq("seven_stars"), any())).thenAnswer(invocation -> invocation.getArgument(1));
+
+        KnowledgeDocument created = service.create("seven_stars", new KnowledgeChanges("Закуска", null, null, null, " Закуска от 7 до 10. "));
+
+        assertThat(created.getText()).isEqualTo("Закуска от 7 до 10.");
+        assertThat(created.getTitle()).isEqualTo("Закуска");
+        assertThat(created.getEmbedding()).containsExactly(1.0);
+    }
+
+    @Test
+    void newKnowledgeIsNotSavedWhenGeminiFails() {
+        when(embeddingModel.embed(anyString())).thenThrow(new RuntimeException("503"));
+
+        assertThatThrownBy(() -> service.create("seven_stars", new KnowledgeChanges(null, null, null, null, "Текст")))
+                .isInstanceOf(EmbeddingFailedException.class);
+        assertThatThrownBy(() -> service.create("seven_stars", new KnowledgeChanges(null, null, null, null, " ")))
+                .isInstanceOf(InvalidKnowledgeException.class);
+        verify(repository, never()).insert(anyString(), any());
+    }
+
+    @Test
+    void deleteWithInvalidIdDoesNotAskMongo() {
+        ObjectId id = new ObjectId();
+        when(repository.delete("seven_stars", id)).thenReturn(true);
+
+        assertThat(service.delete("seven_stars", id.toHexString())).isTrue();
+        assertThat(service.delete("seven_stars", "not-an-id")).isFalse();
+        assertThat(service.delete("seven_stars", null)).isFalse();
+        verify(repository).delete(anyString(), any());
+    }
+
     private ObjectId existing(String text) {
         ObjectId id = new ObjectId();
         when(repository.findByIds("seven_stars", List.of(id))).thenReturn(List.of(document(text)));

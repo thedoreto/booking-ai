@@ -72,6 +72,44 @@ public class KnowledgeService {
     // Промяна от админ панела. Нов embedding (Gemini) – само ако текстът е друг; ако Gemini не отговори, нищо не се записва.
     // Празно – невалиден id или няма такъв документ в knowledge_<hotelId>.
     public Optional<KnowledgeDocument> update(String hotelId, String id, KnowledgeChanges changes) {
+        String text = validText(changes);
+        ObjectId objectId = toObjectId(id);
+        if (objectId == null) {
+            return Optional.empty();
+        }
+        List<KnowledgeDocument> current = knowledgeRepo.findByIds(hotelId, List.of(objectId));
+        if (current.isEmpty()) {
+            return Optional.empty();
+        }
+        boolean textChanged = !text.equals(current.get(0).getText());
+        List<Double> embedding = textChanged ? embedOrFail(hotelId, text) : null;
+        Optional<KnowledgeDocument> updated = knowledgeRepo.update(hotelId, objectId, toDocument(changes, text), embedding);
+        updated.ifPresent(d -> System.out.println("Knowledge updated: hotelId=" + hotelId + ", id=" + id
+                + (textChanged ? ", new embedding" : "")));
+        return updated;
+    }
+
+    // Ново знание от админ панела. Embedding-ът (Gemini) е задължителен – ако Gemini не отговори, нищо не се записва.
+    public KnowledgeDocument create(String hotelId, KnowledgeChanges changes) {
+        String text = validText(changes);
+        KnowledgeDocument document = toDocument(changes, text);
+        document.setEmbedding(embedOrFail(hotelId, text));
+        KnowledgeDocument created = knowledgeRepo.insert(hotelId, document);
+        System.out.println("Knowledge created: hotelId=" + hotelId + ", id=" + created.getId());
+        return created;
+    }
+
+    // Изтрива знанието (дали го ползва бутон – проверява се преди това). false – невалиден id или няма такъв документ.
+    public boolean delete(String hotelId, String id) {
+        ObjectId objectId = toObjectId(id);
+        boolean deleted = objectId != null && knowledgeRepo.delete(hotelId, objectId);
+        if (deleted) {
+            System.out.println("Knowledge deleted: hotelId=" + hotelId + ", id=" + id);
+        }
+        return deleted;
+    }
+
+    private static String validText(KnowledgeChanges changes) {
         String text = trimToNull(changes.text());
         if (text == null) {
             throw new InvalidKnowledgeException("TEXT_REQUIRED");
@@ -79,34 +117,30 @@ public class KnowledgeService {
         if (text.length() > MAX_TEXT_LENGTH) {
             throw new InvalidKnowledgeException("TEXT_TOO_LONG");
         }
-        if (id == null || !ObjectId.isValid(id)) {
-            return Optional.empty();
-        }
-        ObjectId objectId = new ObjectId(id);
-        List<KnowledgeDocument> current = knowledgeRepo.findByIds(hotelId, List.of(objectId));
-        if (current.isEmpty()) {
-            return Optional.empty();
-        }
-        List<Double> embedding = null;
-        if (!text.equals(current.get(0).getText())) {
-            try {
-                embedding = embed(text);
-            } catch (RuntimeException e) {
-                System.err.println("Embedding failed for hotelId=" + hotelId + ", knowledge id=" + id + ": " + e);
-                throw new EmbeddingFailedException(e);
-            }
-        }
+        return text;
+    }
 
+    private static ObjectId toObjectId(String id) {
+        return id != null && ObjectId.isValid(id) ? new ObjectId(id) : null;
+    }
+
+    private static KnowledgeDocument toDocument(KnowledgeChanges changes, String text) {
         KnowledgeDocument document = new KnowledgeDocument();
         document.setTitle(trimToNull(changes.title()));
         document.setCategory(trimToNull(changes.category()));
         document.setTags(cleanTags(changes.tags()));
         document.setSource(trimToNull(changes.source()));
         document.setText(text);
-        Optional<KnowledgeDocument> updated = knowledgeRepo.update(hotelId, objectId, document, embedding);
-        updated.ifPresent(d -> System.out.println("Knowledge updated: hotelId=" + hotelId + ", id=" + id
-                + (text.equals(current.get(0).getText()) ? "" : ", new embedding")));
-        return updated;
+        return document;
+    }
+
+    private List<Double> embedOrFail(String hotelId, String text) {
+        try {
+            return embed(text);
+        } catch (RuntimeException e) {
+            System.err.println("Embedding failed for hotelId=" + hotelId + ": " + e);
+            throw new EmbeddingFailedException(e);
+        }
     }
 
     // RAG: най-близките по смисъл знания на хотела до въпроса (vector search в knowledge_<hotelId>)

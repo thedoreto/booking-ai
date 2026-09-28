@@ -3,12 +3,17 @@ package com.hotel.admin.config;
 import com.hotel.admin.controller.AdminAuthController;
 import com.hotel.admin.controller.AdminKnowledgeController;
 import com.hotel.admin.service.AdminAuthService;
-import com.hotel.config.CorsConfig;
 import com.hotel.admin.service.AdminAuthService.Admin;
 import com.hotel.admin.service.AdminAuthService.LoginResult;
 import com.hotel.admin.service.AdminAuthService.Outcome;
+import com.hotel.admin.service.AdminKnowledgeService;
+import com.hotel.admin.service.AdminKnowledgeService.KnowledgeInUseException;
+import com.hotel.admin.service.AdminKnowledgeService.KnowledgeWithUsage;
+import com.hotel.admin.service.AdminKnowledgeService.ShortcutRef;
+import com.hotel.config.CorsConfig;
 import com.hotel.knowledge.model.KnowledgeDocument;
-import com.hotel.knowledge.service.KnowledgeService;
+import com.hotel.knowledge.service.KnowledgeService.EmbeddingFailedException;
+import com.hotel.knowledge.service.KnowledgeService.InvalidKnowledgeException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +23,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.junit.jupiter.web.SpringJUnitWebConfig;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
@@ -26,12 +32,14 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -45,10 +53,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class AdminWebConfigTest {
 
     private static final Admin ADMIN = new Admin("40_robbers", "the.doreto@gmail.com", "Теодора");
+    private static final String ID = "66f000000000000000000001";
+    private static final String BODY = "{\"title\":\"Паркинг\",\"tags\":[\"паркинг\"],\"text\":\"Нов текст\"}";
 
     @Configuration
     @EnableWebMvc
-    @Import({CorsConfig.class, AdminWebConfig.class, AdminAuthInterceptor.class, AdminAuthController.class, AdminKnowledgeController.class})
+    @Import({CorsConfig.class, AdminWebConfig.class, AdminAuthInterceptor.class, AdminAuthController.class,
+            AdminKnowledgeController.class})
     static class WebConfig {
         @Bean
         AdminAuthService adminAuthService() {
@@ -56,20 +67,20 @@ class AdminWebConfigTest {
         }
 
         @Bean
-        KnowledgeService knowledgeService() {
-            return mock(KnowledgeService.class);
+        AdminKnowledgeService adminKnowledgeService() {
+            return mock(AdminKnowledgeService.class);
         }
     }
 
     @Autowired
     private AdminAuthService adminAuthService;
     @Autowired
-    private KnowledgeService knowledgeService;
+    private AdminKnowledgeService knowledge;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp(WebApplicationContext context) {
-        reset(adminAuthService, knowledgeService);
+        reset(adminAuthService, knowledge);
         when(adminAuthService.verify(any())).thenReturn(Optional.empty());
         when(adminAuthService.verify("good")).thenReturn(Optional.of(ADMIN));
         mvc = MockMvcBuilders.webAppContextSetup(context).build();
@@ -88,78 +99,97 @@ class AdminWebConfigTest {
 
     @Test
     void everythingElseNeedsAValidToken() throws Exception {
-        for (String path : List.of("/api/admin/me", "/api/admin/knowledge")) {
-            mvc.perform(get(path)).andExpect(status().isUnauthorized())
+        List<MockHttpServletRequestBuilder> requests = List.of(get("/api/admin/me"), get("/api/admin/knowledge"),
+                json(post("/api/admin/knowledge")), json(put("/api/admin/knowledge/" + ID)), delete("/api/admin/knowledge/" + ID));
+        for (MockHttpServletRequestBuilder request : requests) {
+            mvc.perform(request).andExpect(status().isUnauthorized())
                     .andExpect(content().json("{\"error\":\"UNAUTHORIZED\"}"));
-            mvc.perform(get(path).header("Authorization", "Bearer bad")).andExpect(status().isUnauthorized());
-            mvc.perform(get(path).header("Authorization", "good")).andExpect(status().isUnauthorized());
         }
-        verify(knowledgeService, never()).findAll(any());
+        for (String header : List.of("Bearer bad", "good")) {
+            mvc.perform(get("/api/admin/knowledge").header("Authorization", header)).andExpect(status().isUnauthorized());
+        }
+        verify(knowledge, never()).list(anyString());
+        verify(knowledge, never()).create(anyString(), any());
+        verify(knowledge, never()).delete(anyString(), anyString());
     }
 
     @Test
     void meReturnsTheAdminFromTheToken() throws Exception {
-        mvc.perform(get("/api/admin/me").header("Authorization", "Bearer good"))
+        mvc.perform(authorized(get("/api/admin/me")))
                 .andExpect(status().isOk())
                 .andExpect(content().json("{\"hotelId\":\"40_robbers\",\"email\":\"the.doreto@gmail.com\",\"name\":\"Теодора\"}"));
     }
 
     @Test
-    void knowledgeOfTheHotelFromTheTokenWithoutEmbedding() throws Exception {
-        KnowledgeDocument doc = new KnowledgeDocument();
-        doc.setId("66f000000000000000000001");
-        doc.setTitle("Паркинг");
-        doc.setCategory("Услуги");
-        doc.setTags(List.of("паркинг"));
-        doc.setText("Безплатен паркинг до хотела.");
+    void knowledgeOfTheHotelFromTheTokenWithButtonsAndWithoutEmbedding() throws Exception {
+        KnowledgeDocument doc = document();
         doc.setEmbedding(List.of(0.1, 0.2));
-        when(knowledgeService.findAll("40_robbers")).thenReturn(List.of(doc));
+        when(knowledge.list("40_robbers")).thenReturn(List.of(
+                new KnowledgeWithUsage(doc, List.of(new ShortcutRef("parking", "Паркинг")))));
 
-        mvc.perform(get("/api/admin/knowledge").param("hotelId", "seven_stars").header("Authorization", "Bearer good"))
+        mvc.perform(authorized(get("/api/admin/knowledge").param("hotelId", "seven_stars")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].id").value("66f000000000000000000001"))
+                .andExpect(jsonPath("$[0].id").value(ID))
                 .andExpect(jsonPath("$[0].title").value("Паркинг"))
-                .andExpect(jsonPath("$[0].text").value("Безплатен паркинг до хотела."))
+                .andExpect(jsonPath("$[0].usedBy[0].shortcutId").value("parking"))
+                .andExpect(jsonPath("$[0].usedBy[0].label").value("Паркинг"))
                 .andExpect(jsonPath("$[0].embedding").doesNotExist());
         // hotelId от адреса не се ползва
-        verify(knowledgeService, never()).findAll("seven_stars");
+        verify(knowledge, never()).list("seven_stars");
+    }
+
+    @Test
+    void createReturns201() throws Exception {
+        when(knowledge.create(eq("40_robbers"), any())).thenReturn(new KnowledgeWithUsage(document(), List.of()));
+
+        mvc.perform(authorized(json(post("/api/admin/knowledge"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(ID))
+                .andExpect(jsonPath("$.usedBy").isEmpty());
     }
 
     @Test
     void editGoesToTheHotelFromTheToken() throws Exception {
-        KnowledgeDocument doc = new KnowledgeDocument();
-        doc.setId("66f000000000000000000001");
-        doc.setText("Нов текст");
-        when(knowledgeService.update(eq("40_robbers"), eq("66f000000000000000000001"), any())).thenReturn(Optional.of(doc));
+        when(knowledge.update(eq("40_robbers"), eq(ID), any())).thenReturn(Optional.of(new KnowledgeWithUsage(document(), List.of())));
 
-        mvc.perform(put("/api/admin/knowledge/66f000000000000000000001").header("Authorization", "Bearer good")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"Паркинг\",\"tags\":[\"паркинг\"],\"text\":\"Нов текст\"}"))
+        mvc.perform(authorized(json(put("/api/admin/knowledge/" + ID))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.text").value("Нов текст"));
-        mvc.perform(put("/api/admin/knowledge/66f000000000000000000001").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"text\":\"x\"}"))
-                .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void editErrorsAreCodes() throws Exception {
-        when(knowledgeService.update(eq("40_robbers"), eq("missing"), any())).thenReturn(Optional.empty());
-        when(knowledgeService.update(eq("40_robbers"), eq("empty"), any()))
-                .thenThrow(new KnowledgeService.InvalidKnowledgeException("TEXT_REQUIRED"));
-        when(knowledgeService.update(eq("40_robbers"), eq("gemini"), any()))
-                .thenThrow(new KnowledgeService.EmbeddingFailedException(new RuntimeException("503")));
+    void createAndEditErrorsAreCodes() throws Exception {
+        when(knowledge.update(eq("40_robbers"), eq("missing"), any())).thenReturn(Optional.empty());
+        when(knowledge.update(eq("40_robbers"), eq("empty"), any())).thenThrow(new InvalidKnowledgeException("TEXT_REQUIRED"));
+        when(knowledge.create(eq("40_robbers"), any())).thenThrow(new EmbeddingFailedException(new RuntimeException("503")));
 
-        String body = "{\"text\":\"x\"}";
-        mvc.perform(put("/api/admin/knowledge/missing").header("Authorization", "Bearer good")
-                        .contentType(MediaType.APPLICATION_JSON).content(body))
+        mvc.perform(authorized(json(put("/api/admin/knowledge/missing"))))
                 .andExpect(status().isNotFound()).andExpect(jsonPath("$.error").value("NOT_FOUND"));
-        mvc.perform(put("/api/admin/knowledge/empty").header("Authorization", "Bearer good")
-                        .contentType(MediaType.APPLICATION_JSON).content(body))
+        mvc.perform(authorized(json(put("/api/admin/knowledge/empty"))))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error").value("TEXT_REQUIRED"));
-        mvc.perform(put("/api/admin/knowledge/gemini").header("Authorization", "Bearer good")
-                        .contentType(MediaType.APPLICATION_JSON).content(body))
+        mvc.perform(authorized(json(post("/api/admin/knowledge"))))
                 .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.error").value("EMBEDDING_FAILED"));
+    }
+
+    @Test
+    void deleteIs204OrNotFound() throws Exception {
+        when(knowledge.delete("40_robbers", ID)).thenReturn(true);
+        when(knowledge.delete("40_robbers", "missing")).thenReturn(false);
+
+        mvc.perform(authorized(delete("/api/admin/knowledge/" + ID))).andExpect(status().isNoContent());
+        mvc.perform(authorized(delete("/api/admin/knowledge/missing")))
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.error").value("NOT_FOUND"));
+    }
+
+    @Test
+    void knowledgeUsedByAButtonIsNotDeleted() throws Exception {
+        when(knowledge.delete("40_robbers", ID))
+                .thenThrow(new KnowledgeInUseException(List.of(new ShortcutRef("parking", "Паркинг"))));
+
+        mvc.perform(authorized(delete("/api/admin/knowledge/" + ID)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("IN_USE"))
+                .andExpect(jsonPath("$.usedBy[0].label").value("Паркинг"));
     }
 
     @Test
@@ -168,5 +198,23 @@ class AdminWebConfigTest {
                         .header("Origin", "http://localhost:5174")
                         .header("Access-Control-Request-Method", "GET"))
                 .andExpect(status().is2xxSuccessful());
+    }
+
+    private static MockHttpServletRequestBuilder authorized(MockHttpServletRequestBuilder request) {
+        return request.header("Authorization", "Bearer good");
+    }
+
+    private static MockHttpServletRequestBuilder json(MockHttpServletRequestBuilder request) {
+        return request.contentType(MediaType.APPLICATION_JSON).content(BODY);
+    }
+
+    private static KnowledgeDocument document() {
+        KnowledgeDocument doc = new KnowledgeDocument();
+        doc.setId(ID);
+        doc.setTitle("Паркинг");
+        doc.setCategory("Услуги");
+        doc.setTags(List.of("паркинг"));
+        doc.setText("Нов текст");
+        return doc;
     }
 }

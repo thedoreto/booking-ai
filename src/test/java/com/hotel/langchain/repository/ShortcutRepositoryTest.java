@@ -37,4 +37,13 @@ class ShortcutRepositoryTest {
                 .contains("\"shortcutId\": \"parking\"")
                 .contains("\"isActive\": {\"$ne\": false}");
     }
+
+    @Test
+    void knowledgeButtonsIncludeInactiveOnes() {
+        repository.findKnowledgeShortcuts("40_robbers");
+
+        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
+        verify(mongoTemplate).find(query.capture(), eq(Shortcut.class), eq("shortcuts_40_robbers"));
+        assertThat(query.getValue().getQueryObject()).containsEntry("action.type", "knowledge").doesNotContainKey("isActive");
+    }
 }

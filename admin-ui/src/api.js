@@ -16,10 +16,12 @@ export function clearToken() {
 }
 
 // Грешка с кода от booking-ai (INVALID_CREDENTIALS, TOO_MANY_ATTEMPTS, UNAUTHORIZED, TEXT_REQUIRED…) или NETWORK
+// body – целият отговор (напр. usedBy при IN_USE)
 export class ApiError extends Error {
-  constructor(code) {
+  constructor(code, body = {}) {
     super(code)
     this.code = code
+    this.body = body
   }
 }
 
@@ -35,7 +37,7 @@ async function request(path, options = {}) {
   }
   const body = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new ApiError(body.error || 'NETWORK')
+    throw new ApiError(body.error || 'NETWORK', body)
   }
   return body
 }
@@ -64,4 +66,14 @@ export function updateKnowledge(token, id, changes) {
     method: 'PUT',
     body: JSON.stringify(changes),
   })
+}
+
+// Ново знание → създаденият документ
+export function createKnowledge(token, changes) {
+  return request('/knowledge', { ...authorized(token), method: 'POST', body: JSON.stringify(changes) })
+}
+
+// Изтриване; знание, което се ползва от бутон, не се трие (грешка IN_USE)
+export function deleteKnowledge(token, id) {
+  return request(`/knowledge/${encodeURIComponent(id)}`, { ...authorized(token), method: 'DELETE' })
 }

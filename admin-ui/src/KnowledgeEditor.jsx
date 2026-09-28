@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Alert, Autocomplete, Box, Button, TextField, Typography } from '@mui/material'
-import { getToken, updateKnowledge } from './api.js'
+import { createKnowledge, getToken, updateKnowledge } from './api.js'
 
 const MAX_TEXT_LENGTH = 10000
 
@@ -8,12 +8,15 @@ const ERRORS = {
   TEXT_REQUIRED: 'Текстът е задължителен.',
   TEXT_TOO_LONG: `Текстът е твърде дълъг (най-много ${MAX_TEXT_LENGTH.toLocaleString('bg-BG')} знака).`,
   NOT_FOUND: 'Документът вече не съществува.',
-  EMBEDDING_FAILED: 'Gemini не отговори – промяната не е записана. Опитайте отново.',
+  EMBEDDING_FAILED: 'Gemini не отговори – нищо не е записано. Опитайте отново.',
   NETWORK: 'Няма връзка със сървъра. Промяната не е записана.',
 }
 
-// Формата за редакция на едно знание. Нов embedding се прави в booking-ai, само ако текстът е променен.
-export default function KnowledgeEditor({ doc, categories, allTags, onSaved, onCancel, onUnauthorized }) {
+// Формата за ново знание (doc = null) или за редакция. Embedding-ът се прави в booking-ai: за новото – винаги,
+// при редакция – само ако текстът е променен.
+export default function KnowledgeEditor({ doc: existing, categories, allTags, onSaved, onCancel, onUnauthorized }) {
+  const isNew = !existing
+  const doc = existing || {}
   const [title, setTitle] = useState(doc.title || '')
   const [category, setCategory] = useState(doc.category || '')
   const [tags, setTags] = useState(doc.tags || [])
@@ -22,15 +25,18 @@ export default function KnowledgeEditor({ doc, categories, allTags, onSaved, onC
   const [error, setError] = useState(null)
   const [saving, setSaving] = useState(false)
 
-  const textChanged = text.trim() !== (doc.text || '').trim()
+  const textChanged = !isNew && text.trim() !== (doc.text || '').trim()
 
   async function handleSubmit(event) {
     event.preventDefault()
     setError(null)
     setSaving(true)
     try {
-      const updated = await updateKnowledge(getToken(), doc.id, { title, category, tags, source, text })
-      onSaved(updated)
+      const changes = { title, category, tags, source, text }
+      const saved = isNew
+        ? await createKnowledge(getToken(), changes)
+        : await updateKnowledge(getToken(), doc.id, changes)
+      onSaved(saved)
     } catch (e) {
       if (e.code === 'UNAUTHORIZED') {
         onUnauthorized()

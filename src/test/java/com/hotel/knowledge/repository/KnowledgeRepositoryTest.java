@@ -9,6 +9,7 @@ import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
+import com.mongodb.client.result.DeleteResult;
 
 import java.util.List;
 import java.util.Set;
@@ -18,6 +19,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -90,6 +92,23 @@ class KnowledgeRepositoryTest {
         verify(mongoTemplate).findAndModify(any(Query.class), update.capture(),
                 any(FindAndModifyOptions.class), eq(KnowledgeDocument.class), anyString());
         assertThat(update.getValue().getUpdateObject().toJson()).doesNotContain("embedding");
+    }
+
+    @Test
+    void insertAndDeleteGoToTheHotelsCollection() {
+        KnowledgeDocument doc = document(new ObjectId(), "Текст");
+        ObjectId id = new ObjectId();
+        when(mongoTemplate.remove(any(Query.class), eq("knowledge_40_robbers")))
+                .thenReturn(DeleteResult.acknowledged(1), DeleteResult.acknowledged(0));
+
+        repository.insert("40_robbers", doc);
+
+        verify(mongoTemplate).insert(doc, "knowledge_40_robbers");
+        assertThat(repository.delete("40_robbers", id)).isTrue();
+        assertThat(repository.delete("40_robbers", id)).isFalse();
+        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
+        verify(mongoTemplate, times(2)).remove(query.capture(), eq("knowledge_40_robbers"));
+        assertThat(query.getValue().getQueryObject()).containsEntry("_id", id);
     }
 
     @Test
