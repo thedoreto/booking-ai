@@ -2,6 +2,44 @@
 
 Планът и идеите за следващи сесии са в `PLAN.md`.
 
+## Сесия 2026-09-28 – модел и repository за всяка колекция, преводи на хотела
+
+### Модел и repository за всяка колекция (booking-ai `9340371`)
+- Правило: **само repository-то знае името на колекцията и получава `hotelId`**, никога готово име; моделите са с `@Document` без име.
+- `knowledge_`: `KnowledgeRepository.findByIds(hotelId, ids)` (модел `KnowledgeDocument` вместо суров `Document`, без `embedding`), `searchByVector(hotelId, …)`, `findHotelIds()` (ползва го `HotelRegistry`); `HotelContentRetriever` взима `hotelId` от `TenantContext` и го подава като параметър.
+- `logs_`: нов модел `ChatLog` (+ `Step`, `Gemini`) и `ChatLogRepository` (`insert`, `addFlowStep`, индексите); `ChatLogService` пази само опашката. **Промяна в данните:** в `steps[]` допълнителните полета са под `details` (напр. `steps[].details.roomsFound`), празните полета не се записват.
+- `hotel_settings` → `HotelSettingsRepository`, `translations` → `TranslationRepository`; фалшивото `@Document("shortcuts_#hotelId#")` е махнато (не е SpEL – би търсило колекция с това буквално име).
+- `config/MongoConfig` – без поле `_class` в записаните документи.
+
+### Преводи на хотела (booking-ai `3a5edd2`)
+- `translations_<hotelId>` (по желание) с предимство пред общата `translations`; `TranslationService.forRequest(hotelId, език)` → `Texts` (`message`, `translate`, `withPrefix`), помощните методи получават `Texts` вместо езика.
+- `message`: поисканият език → езикът по подразбиране на хотела → `bg`, за всеки първо хотелът, после общата. `translate`: само на поискания език, първо хотелът; записът трябва да съдържа текста точно както идва от бекенда (напр. „Единична стая“).
+- Типовете стаи могат да са и в общата, и при хотела. Всяка колекция – отделен кеш (5 мин.).
+- При проверката колекцията се оказа с име `translations__40_robbers` (две долни черти) – чете се като празна, без грешка в лога.
+- След commit-а (не е комитнато): `HotelTools.getRoomTypes` превежда имената на типовете – от бутон отговорът отива директно в UI; тест в `ShortcutToolRunnerTest`.
+
+### booking-ui (`b6d082f`)
+- Календарът вече е на езика на чата и при `npm run dev`: локалите на dayjs са UMD и, заредени сурови, търсят глобален `dayjs` – `loadCalendarLocale` задава `globalThis.dayjs` и връща `true` само ако локалът е в `dayjs.Ls`. В build-а (Render) локалът и преди получаваше dayjs от бъндъла.
+
+### Нови тестове (не са комитнати)
+- `UiActionShortCircuitChatModelTest`, `RetryingChatLanguageModelTest`, `UserFirstChatMemoryTest` – обвивките около Gemini и паметта.
+- `HotelBackendClientTest` (Kafka request/reply, `error`, timeout – чака истинските 5s), `RoomTypeServiceTest` (кеш, пауза след неуспех, `normalize`, `nameOf`; изтичането на кеша не се тества – `RoomTypeService` ползва `Instant.now()`, не `Clock`).
+- `KnowledgeServiceTest`, `HotelContentRetrieverTest`, `GeminiUsageTrackerTest`, `ShortcutRepositoryTest`, `TranslationRepositoryTest`.
+- `HotelToolsTest` – датите от модела (формати, минала година, изпускане), `getReservations`, трите вида `toolError`.
+- `RoomBookingServiceTest` – от 3 на 14: невалидни/минали дати, свободни стаи, няма стаи, грешки по вид, потвърждение с общата сума и паметта на Gemini, отказ, `backendErrorText`.
+- `AiLangChainControllerFlowTest` (17) – потоците през контролера: бутони (знание, tool, липсващ/скрит, грешка), отговор, действие за UI и грешки 429/503/друга от Gemini, адресите без LLM и статусите на `ChatFlow`, `flowId` в `data`. Подробностите в стъпките (`roomsFound`, `bookingIds`…) не се проверяват – `ChatLogEntry` няма публичен начин да се прочетат.
+- `ChatHistoryServiceTest` (+2: `record` в паметта на потребителя, грешка в паметта не проваля действието), `MongoConfigTest` (записът е без `_class` и празни полета, чете се обратно; без `MongoConfig` тестът за записа пада), `KafkaServiceTest` (JSON с ключ хотела, неуспешно изпращане и не-JSON не хвърлят).
+- Командата в `CLAUDE.md` за тестовете без облак: `-Dtest='!BookingAiApplicationTests'`.
+- Забелязано, не е пипано: в `HotelTools.getAllRooms` проверката за липсващ хотел е недостижима (`TenantContext.getHotelId()` хвърля преди нея), а текстът ѝ е на български в кода.
+
+### Проверено
+- booking-ai: всички тестове без облак – 169; временен тест с истинския converter – `ChatLog` и стъпката в `$push` се записват без `_class` и без празни полета; временен тест само за четене срещу `HotelAI` за колекциите с преводи (изтрити след това).
+- booking-ui: ESLint без забележки за `chatTexts.js`, `npm run build`.
+
+### Следващата сесия
+- Не е прегледан `SELF_LEARNING_IDEAS.md`.
+- Commit на поправката в `HotelTools.getRoomTypes` и на `.md` файловете.
+
 ## Сесия 2026-09-27 (2) – езици на чата
 
 ### Данни в Mongo (`HotelAI`)

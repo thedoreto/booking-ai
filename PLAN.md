@@ -37,7 +37,7 @@
   - [x] Текстовете на асистента (62) и на прозореца в UI (`ui.*`, 34) – в обща колекция `translations` (`{ key, texts: { bg, en } }`, `{име}` за данните), `TranslationService`; `/api/chat/settings` връща `texts` за прозореца – 2026-09-27.
   - [x] Бутоните: `label: { bg, en }` в самия бутон; `/api/shortcuts` връща `{ shortcutId, label, category }` на избрания език – 2026-09-27. **Преди deploy:** заявката (Aggregations + `$merge`), която прави `label` на обект, се пуска заедно с новия booking-ai – иначе бутоните не се показват.
   - [x] Типовете стаи от бекенда – превеждат се по текст от `translations` – 2026-09-27.
-  - [ ] **`translations_<hotelId>`** – преводи на хотела с предимство пред общите. План: `TRANSLATIONS_HOTEL_PLAN.md` (**следващата сесия започва оттук** – първо да се одобри планът).
+  - [x] **`translations_<hotelId>`** – преводи на хотела с предимство пред общите (`TranslationService.forRequest` → `Texts`); типовете стаи – и в общата, и при хотела; план: `TRANSLATIONS_HOTEL_PLAN.md` – 2026-09-28.
   - [ ] Знанията по бутон – превод в документа в `knowledge_<hotelId>`; без превод с Gemini.
   - [ ] Езикът – и в логовете.
   - [ ] **Валутата да е настройка на хотела** (решено 2026-09-27): сега „лв.“/„BGN“ е вътре в текстовете (`booking.confirmedRoom`, `booking.total`, `ui.pricePerNight`, `ui.bookButton`, `ui.price`); да стане `{currency}` от `hotel_settings`, а форматът на сумата – по езика.
