@@ -57,6 +57,7 @@ Vite + React + MUI в `admin-ui/`; booking-ai я сервира на `/admin/` (
 | `POST /api/admin/login` `{ hotelId, email, password }` | Вход | `200 { token, hotelId, email, name }`; `401 { error: "INVALID_CREDENTIALS" }`; `429 { error: "TOO_MANY_ATTEMPTS" }` |
 | `GET /api/admin/me` с `Authorization: Bearer <token>` | Кой е влязъл (дали токенът още важи) | `200 { hotelId, email, name }`; `401 { error: "UNAUTHORIZED" }` |
 | `GET /api/admin/knowledge` с `Authorization: Bearer <token>` | Знанията на хотела от токена, по категория и заглавие | `200 [{ id, title, category, tags, source, text }]`; `401` |
+| `PUT /api/admin/knowledge/{id}` `{ title, category, tags, source, text }` | Редакция. Празните `title`, `category`, `source`, `tags` махат полето; `metadata` не се пипа. Нов embedding (Gemini) – само ако текстът е друг | `200` новият документ; `400 TEXT_REQUIRED` / `TEXT_TOO_LONG` (над 10 000 знака); `404 NOT_FOUND`; `503 EMBEDDING_FAILED` – Gemini не отговори, нищо не е записано |
 
 Всички адреси под `/api/admin/` освен `/login` минават през `AdminAuthInterceptor` – нов адрес е защитен по подразбиране.
 

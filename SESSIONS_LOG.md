@@ -33,8 +33,14 @@
 - `admin-ui`: таб „Знания“ – групирани по категория, заглавие и етикети, отварят се за целия текст, `id` и източник; търсене по заглавие, текст, категория и етикети; изтекъл токен → изход.
 - Тестове: `AdminWebConfigTest` (Spring MVC: `/login` отворен, без/с грешен токен – 401, `/me`, знанията на хотела от токена без `embedding`, CORS preflight), `KnowledgeRepositoryTest` (+1).
 
+### Админ панел – редакция на знанията (не е комитнато)
+- `PUT /api/admin/knowledge/{id}`: `KnowledgeService.update` – текстът е задължителен, до 10 000 знака; нов embedding (`gemini-embedding-001`, от `text`, както досегашните ръчни) само при променен текст; при грешка от Gemini нищо не се записва (503 `EMBEDDING_FAILED`). `KnowledgeRepository.update` – `findAndModify` с `$set`/`$unset` само на `title`, `category`, `tags`, `source`, `text` (+ `embedding`), `metadata` не се пипа; отговорът е без `embedding`.
+- `admin-ui`: „Редактирай“ в отворения документ → `KnowledgeEditor` (заглавие, категория с подсказки, източник, етикети като chips, текст с брояч); при променен текст – бележка за новия embedding.
+- Без добавяне и изтриване – следваща стъпка, с проверка кои бутони (`knowledgeIds`) ползват знанието.
+- Тестове: `KnowledgeServiceTest` (+5), `KnowledgeRepositoryTest` (+2), `AdminWebConfigTest` (+2).
+
 ### Проверено
-- booking-ai: всички тестове без облак – 196 (след знанията); преди тях – 192; `AdminPasswordHash` през `exec:java` връща BCrypt хеш; `mvn clean package` – jar-ът съдържа `static/admin/index.html` и `assets/`; ESLint за `admin-ui` без забележки.
+- booking-ai: всички тестове без облак – 205 (след редакцията); 196 след прегледа на знанията; преди тях – 192; `AdminPasswordHash` през `exec:java` връща BCrypt хеш; `mvn clean package` – jar-ът съдържа `static/admin/index.html` и `assets/`; ESLint за `admin-ui` без забележки.
 
 ## Сесия 2026-09-28 – модел и repository за всяка колекция, преводи на хотела
 
