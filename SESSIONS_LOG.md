@@ -16,12 +16,12 @@
 - `message`: поисканият език → езикът по подразбиране на хотела → `bg`, за всеки първо хотелът, после общата. `translate`: само на поискания език, първо хотелът; записът трябва да съдържа текста точно както идва от бекенда (напр. „Единична стая“).
 - Типовете стаи могат да са и в общата, и при хотела. Всяка колекция – отделен кеш (5 мин.).
 - При проверката колекцията се оказа с име `translations__40_robbers` (две долни черти) – чете се като празна, без грешка в лога.
-- След commit-а (не е комитнато): `HotelTools.getRoomTypes` превежда имената на типовете – от бутон отговорът отива директно в UI; тест в `ShortcutToolRunnerTest`.
+- `eed4739`: `HotelTools.getRoomTypes` превежда имената на типовете – от бутон отговорът отива директно в UI; тест в `ShortcutToolRunnerTest`.
 
-### booking-ui (`b6d082f`)
+### booking-ui (`b6d082f`, бележки `3094301`)
 - Календарът вече е на езика на чата и при `npm run dev`: локалите на dayjs са UMD и, заредени сурови, търсят глобален `dayjs` – `loadCalendarLocale` задава `globalThis.dayjs` и връща `true` само ако локалът е в `dayjs.Ls`. В build-а (Render) локалът и преди получаваше dayjs от бъндъла.
 
-### Нови тестове (не са комитнати)
+### Нови тестове (booking-ai `92b1b85`)
 - `UiActionShortCircuitChatModelTest`, `RetryingChatLanguageModelTest`, `UserFirstChatMemoryTest` – обвивките около Gemini и паметта.
 - `HotelBackendClientTest` (Kafka request/reply, `error`, timeout – чака истинските 5s), `RoomTypeServiceTest` (кеш, пауза след неуспех, `normalize`, `nameOf`; изтичането на кеша не се тества – `RoomTypeService` ползва `Instant.now()`, не `Clock`).
 - `KnowledgeServiceTest`, `HotelContentRetrieverTest`, `GeminiUsageTrackerTest`, `ShortcutRepositoryTest`, `TranslationRepositoryTest`.
@@ -32,13 +32,33 @@
 - Командата в `CLAUDE.md` за тестовете без облак: `-Dtest='!BookingAiApplicationTests'`.
 - Забелязано, не е пипано: в `HotelTools.getAllRooms` проверката за липсващ хотел е недостижима (`TenantContext.getHotelId()` хвърля преди нея), а текстът ѝ е на български в кода.
 
+### Kafka – топици по хотел (стъпка 1, не е комитнато)
+- Защо: при сегашния код данни не се смесват (ключ `hotelId` + филтър в booking-system, `correlationId` в booking-ai), но всеки бекенд получава всички заявки (и JWT-тата на гостите) и сам изхвърля чуждите; при много хотели трафикът към бекендите расте N пъти. Истинската защита (чужд бекенд да не може да чете) е стъпка 2 – потребител с ACL в Aiven за всеки хотел и сертификатите извън git; всички ползват един сертификат (еднакви файлове в `certs/` на двата проекта).
+- booking-ai `HotelBackendClient`: заявката – в `hotel-requests-<hotelId>`, без `replyTo`; отговорите – `topicPattern = "hotel-replies-.*"` с `metadata.max.age.ms=30000` (нов хотел до 30s); чакащата заявка помни хотела (`Pending`) и отговор от топика на друг хотел се пропуска. Тестове: `HotelBackendClientTest` (+1: чужд топик), `KafkaServiceTest` – новото име на топика.
+- booking-system `GlobalKafkaConsumer`: слуша `hotel-requests-${hotel.backend.id}`, отговаря само в `hotel-replies-<hotelId>` (`replyTopic()`), `replyTo` от заявката не се чете, филтърът по ключ остава. Тестове: `GlobalKafkaConsumerTest` (+2: `replyTo` на друг хотел се игнорира, заявка с ключ на друг хотел се пропуска).
+- `CLAUDE.md` в двата проекта и `PLAN.md` (задачата е разделена: топици – готово, ACL и сертификати – остава).
+- Deploy: трите услуги (booking-ai и booking-system на seven_stars в Render, локалният booking-system на 40_robbers) минават заедно; топиците `hotel-requests-/hotel-replies-` за `40_robbers` и `seven_stars` се създават в Aiven преди старта (1 partition, кратко retention – съобщенията носят JWT); нови env няма.
+
 ### Проверено
+- Kafka топиците: booking-ai – 170 теста без облак; booking-system – `GlobalKafkaConsumerTest`, `HotelServiceImagesTest`, `JwtServiceTest` (16).
 - booking-ai: всички тестове без облак – 169; временен тест с истинския converter – `ChatLog` и стъпката в `$push` се записват без `_class` и без празни полета; временен тест само за четене срещу `HotelAI` за колекциите с преводи (изтрити след това).
 - booking-ui: ESLint без забележки за `chatTexts.js`, `npm run build`.
 
+### Commit-и
+| Repo | Commit | Какво |
+|---|---|---|
+| booking-ai | `9340371` | Модел и repository за всяка колекция, `MongoConfig` |
+| booking-ai | `3a5edd2` | `translations_<hotelId>`, `Texts` |
+| booking-ai | `eed4739` | `getRoomTypes` превежда имената |
+| booking-ai | `92b1b85` | Новите тестове |
+| booking-ai | `bc0323f` | Бележките (`CLAUDE.md`, `PLAN.md`, този лог, плана за преводите) |
+| booking-ui | `b6d082f` | Календарът на езика на чата |
+| booking-ui | `3094301` | Бележките |
+
 ### Следващата сесия
+- Commit на топиците по хотел (booking-ai и booking-system) и на `.md` файловете.
 - Не е прегледан `SELF_LEARNING_IDEAS.md`.
-- Commit на поправката в `HotelTools.getRoomTypes` и на `.md` файловете.
+- По избор (предложени, не направени): `Clock` в `RoomTypeService` (за тест на изтичането на кеша); махане на недостижимата проверка в `HotelTools.getAllRooms`; публичен начин за четене на подробностите в `ChatLogEntry` (за тест на `roomsFound`, `bookingIds`… в контролера); превод на типовете стаи по код (`roomType.SINGLE`), ако хотел трябва да смени и българското име.
 
 ## Сесия 2026-09-27 (2) – езици на чата
 
