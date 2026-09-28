@@ -1,8 +1,8 @@
 package com.hotel.langchain.service;
 
 import com.hotel.langchain.model.HotelSettings;
+import com.hotel.langchain.repository.HotelSettingsRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -29,18 +29,18 @@ public class HotelLanguages {
 
     private static final Duration REFRESH_AFTER = Duration.ofMinutes(5);
 
-    private final MongoTemplate mongoTemplate;
+    private final HotelSettingsRepository hotelSettingsRepository;
     private final Clock clock;
     private volatile Map<String, Languages> languages = Map.of();
     private volatile Instant loadedAt;
 
     @Autowired
-    public HotelLanguages(MongoTemplate mongoTemplate) {
-        this(mongoTemplate, Clock.systemUTC());
+    public HotelLanguages(HotelSettingsRepository hotelSettingsRepository) {
+        this(hotelSettingsRepository, Clock.systemUTC());
     }
 
-    HotelLanguages(MongoTemplate mongoTemplate, Clock clock) {
-        this.mongoTemplate = mongoTemplate;
+    HotelLanguages(HotelSettingsRepository hotelSettingsRepository, Clock clock) {
+        this.hotelSettingsRepository = hotelSettingsRepository;
         this.clock = clock;
     }
 
@@ -82,7 +82,7 @@ public class HotelLanguages {
         }
         try {
             Map<String, Languages> loaded = new HashMap<>();
-            for (HotelSettings settings : mongoTemplate.findAll(HotelSettings.class)) {
+            for (HotelSettings settings : hotelSettingsRepository.findAll()) {
                 String hotelId = settings.getHotelId();
                 if (hotelId == null || hotelId.isBlank()) {
                     System.err.println("hotel_settings document without hotelId: _id=" + settings.getId());

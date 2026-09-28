@@ -4,17 +4,23 @@ import com.hotel.knowledge.model.KnowledgeDocument;
 import org.bson.Document;
 import org.bson.types.ObjectId;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Repository;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Repository
 public class KnowledgeRepository {
+
+    // Знанията на всеки хотел са в колекция knowledge_<hotelId>
+    private static final String COLLECTION_PREFIX = "knowledge_";
 
     private final MongoTemplate mongoTemplate;
 
@@ -22,25 +28,29 @@ public class KnowledgeRepository {
         this.mongoTemplate = mongoTemplate;
     }
 
-    // Текстовете на документите по _id, в реда на ids – директно от колекцията, без vector search.
-    // Липсващ документ или документ без text се пропуска.
-    public List<String> findTextsByIds(List<ObjectId> ids, String collectionName) {
+    // Хотелите, които имат знания (колекция knowledge_<hotelId>)
+    public Set<String> findHotelIds() {
+        return mongoTemplate.getCollectionNames().stream()
+                .filter(name -> name.startsWith(COLLECTION_PREFIX))
+                .map(name -> name.substring(COLLECTION_PREFIX.length()))
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    // Документите по _id, в реда на ids – директно от колекцията, без vector search. Липсващ документ се пропуска.
+    // Без embedding – не е нужен, а е голям.
+    public List<KnowledgeDocument> findByIds(String hotelId, List<ObjectId> ids) {
         Query query = new Query(Criteria.where("_id").in(ids));
-        Map<Object, String> textById = new HashMap<>();
-        for (Document doc : mongoTemplate.find(query, Document.class, collectionName)) {
-            textById.put(doc.get("_id"), doc.getString("text"));
-        }
+        query.fields().exclude("embedding");
+        Map<String, KnowledgeDocument> byId = mongoTemplate.find(query, KnowledgeDocument.class, collection(hotelId))
+                .stream()
+                .collect(Collectors.toMap(KnowledgeDocument::getId, Function.identity()));
         return ids.stream()
-                .map(textById::get)
+                .map(id -> byId.get(id.toHexString()))
                 .filter(Objects::nonNull)
-                .filter(text -> !text.isBlank())
                 .toList();
     }
 
-    public List<KnowledgeDocument> searchByVector(
-            List<Double> embedding,
-            String collectionName) {
-
+    public List<KnowledgeDocument> searchByVector(String hotelId, List<Double> embedding) {
         Document vectorSearch = new Document("$vectorSearch",
                 new Document("index", "autoembed_index")
                         .append("path", "embedding")
@@ -49,14 +59,12 @@ public class KnowledgeRepository {
                         .append("limit", 5)
         );
 
-        var aggregation = org.springframework.data.mongodb.core.aggregation.Aggregation.newAggregation(
-                context -> vectorSearch
-        );
+        Aggregation aggregation = Aggregation.newAggregation(context -> vectorSearch);
 
-        return mongoTemplate.aggregate(
-                aggregation,
-                collectionName,
-                KnowledgeDocument.class
-        ).getMappedResults();
+        return mongoTemplate.aggregate(aggregation, collection(hotelId), KnowledgeDocument.class).getMappedResults();
+    }
+
+    private static String collection(String hotelId) {
+        return COLLECTION_PREFIX + hotelId;
     }
 }

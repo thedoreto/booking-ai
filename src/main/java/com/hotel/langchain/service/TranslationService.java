@@ -1,8 +1,8 @@
 package com.hotel.langchain.service;
 
 import com.hotel.langchain.model.Translation;
+import com.hotel.langchain.repository.TranslationRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -24,18 +24,18 @@ public class TranslationService {
 
     private record Loaded(Map<String, Map<String, String>> byKey, Map<String, Map<String, String>> byText) {}
 
-    private final MongoTemplate mongoTemplate;
+    private final TranslationRepository translationRepository;
     private final Clock clock;
     private volatile Loaded loaded = new Loaded(Map.of(), Map.of());
     private volatile Instant loadedAt;
 
     @Autowired
-    public TranslationService(MongoTemplate mongoTemplate) {
-        this(mongoTemplate, Clock.systemUTC());
+    public TranslationService(TranslationRepository translationRepository) {
+        this(translationRepository, Clock.systemUTC());
     }
 
-    TranslationService(MongoTemplate mongoTemplate, Clock clock) {
-        this.mongoTemplate = mongoTemplate;
+    TranslationService(TranslationRepository translationRepository, Clock clock) {
+        this.translationRepository = translationRepository;
         this.clock = clock;
     }
 
@@ -100,7 +100,7 @@ public class TranslationService {
         try {
             Map<String, Map<String, String>> byKey = new HashMap<>();
             Map<String, Map<String, String>> byText = new HashMap<>();
-            for (Translation translation : mongoTemplate.findAll(Translation.class)) {
+            for (Translation translation : translationRepository.findAll()) {
                 Map<String, String> texts = clean(translation.getTexts());
                 if (texts.isEmpty()) {
                     System.err.println("Translation without texts: _id=" + translation.getId());

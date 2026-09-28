@@ -22,14 +22,16 @@ public class ShortcutRepository {
 
     // Само активните бутони (isActive не е false; липсващо поле = активен)
     public List<Shortcut> findAllByHotelId(String hotelId) {
-        String collectionName = COLLECTION_PREFIX + hotelId;
-        System.out.println("looking for collection name: " + collectionName);
-        return mongoTemplate.find(new Query(activeCriteria()), Shortcut.class, collectionName);
+        return mongoTemplate.find(new Query(activeCriteria()), Shortcut.class, collection(hotelId));
     }
 
     public Shortcut findActiveByShortcutId(String hotelId, String shortcutId) {
         Query query = new Query(Criteria.where("shortcutId").is(shortcutId).andOperator(activeCriteria()));
-        return mongoTemplate.findOne(query, Shortcut.class, COLLECTION_PREFIX + hotelId);
+        return mongoTemplate.findOne(query, Shortcut.class, collection(hotelId));
+    }
+
+    private static String collection(String hotelId) {
+        return COLLECTION_PREFIX + hotelId;
     }
 
     private Criteria activeCriteria() {

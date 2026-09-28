@@ -27,10 +27,8 @@ public class HotelContentRetriever implements ContentRetriever {
     @Override
     public List<Content> retrieve(Query query) {
         try {
-            // hotelId, който дойде от UI през контролера; знанията на хотела са в knowledge_<hotelId>
-            String collectionName = KnowledgeService.COLLECTION_PREFIX + TenantContext.getHotelId();
-
-            List<KnowledgeDocument> documents = knowledgeService.findRelevant(query.text(), collectionName);
+            // LangChain4j вика retriever-а без hotelId – той идва от UI през контролера в TenantContext
+            List<KnowledgeDocument> documents = knowledgeService.findRelevant(TenantContext.getHotelId(), query.text());
 
             if (documents == null || documents.isEmpty()) {
                 return Collections.emptyList();

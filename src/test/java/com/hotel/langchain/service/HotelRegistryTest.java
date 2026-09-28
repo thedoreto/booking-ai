@@ -1,7 +1,7 @@
 package com.hotel.langchain.service;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import com.hotel.knowledge.repository.KnowledgeRepository;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -18,14 +18,13 @@ import static org.mockito.Mockito.when;
 
 class HotelRegistryTest {
 
-    private final MongoTemplate mongoTemplate = mock(MongoTemplate.class);
+    private final KnowledgeRepository knowledgeRepository = mock(KnowledgeRepository.class);
     private final MutableClock clock = new MutableClock();
-    private final HotelRegistry registry = new HotelRegistry(mongoTemplate, clock);
+    private final HotelRegistry registry = new HotelRegistry(knowledgeRepository, clock);
 
     @Test
-    void hotelWithKnowledgeCollectionIsKnown() {
-        when(mongoTemplate.getCollectionNames())
-                .thenReturn(Set.of("knowledge_seven_stars", "shortcuts_seven_stars", "logs_fake", "shortcuts_other"));
+    void hotelWithKnowledgeIsKnown() {
+        when(knowledgeRepository.findHotelIds()).thenReturn(Set.of("seven_stars"));
 
         assertThat(registry.isKnown("seven_stars")).isTrue();
         assertThat(registry.isKnown("fake")).isFalse();
@@ -39,43 +38,43 @@ class HotelRegistryTest {
         assertThat(registry.isKnown("seven.stars")).isFalse();
         assertThat(registry.isKnown("a b")).isFalse();
         assertThat(registry.isKnown("x".repeat(65))).isFalse();
-        verifyNoInteractions(mongoTemplate);
+        verifyNoInteractions(knowledgeRepository);
     }
 
     @Test
     void unknownHotelsAskMongoAtMostOncePerMinute() {
-        when(mongoTemplate.getCollectionNames()).thenReturn(Set.of("knowledge_seven_stars"));
+        when(knowledgeRepository.findHotelIds()).thenReturn(Set.of("seven_stars"));
 
         for (int i = 0; i < 100; i++) {
             assertThat(registry.isKnown("fake_" + i)).isFalse();
         }
-        verify(mongoTemplate, times(1)).getCollectionNames();
+        verify(knowledgeRepository, times(1)).findHotelIds();
 
         // Нов хотел се вижда след минута
-        when(mongoTemplate.getCollectionNames()).thenReturn(Set.of("knowledge_seven_stars", "knowledge_new_hotel"));
+        when(knowledgeRepository.findHotelIds()).thenReturn(Set.of("seven_stars", "new_hotel"));
         assertThat(registry.isKnown("new_hotel")).isFalse();
         clock.advance(Duration.ofMinutes(1));
         assertThat(registry.isKnown("new_hotel")).isTrue();
-        verify(mongoTemplate, times(2)).getCollectionNames();
+        verify(knowledgeRepository, times(2)).findHotelIds();
     }
 
     @Test
     void knownHotelDoesNotAskMongoAgain() {
-        when(mongoTemplate.getCollectionNames()).thenReturn(Set.of("knowledge_seven_stars"));
+        when(knowledgeRepository.findHotelIds()).thenReturn(Set.of("seven_stars"));
 
         registry.isKnown("seven_stars");
         clock.advance(Duration.ofHours(1));
         registry.isKnown("seven_stars");
 
-        verify(mongoTemplate, times(1)).getCollectionNames();
+        verify(knowledgeRepository, times(1)).findHotelIds();
     }
 
     @Test
     void mongoErrorKeepsPreviousList() {
-        when(mongoTemplate.getCollectionNames()).thenReturn(Set.of("knowledge_seven_stars"));
+        when(knowledgeRepository.findHotelIds()).thenReturn(Set.of("seven_stars"));
         registry.isKnown("seven_stars");
 
-        when(mongoTemplate.getCollectionNames()).thenThrow(new RuntimeException("Atlas down"));
+        when(knowledgeRepository.findHotelIds()).thenThrow(new RuntimeException("Atlas down"));
         clock.advance(Duration.ofMinutes(1));
 
         assertThat(registry.isKnown("fake")).isFalse();

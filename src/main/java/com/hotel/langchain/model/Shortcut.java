@@ -9,10 +9,10 @@ import java.util.List;
 import java.util.Map;
 
 // Бутон в чата – само препратка: action казва към какво сочи (знание или tool).
-// В Mongo (shortcuts_<hotelId>):
+// В Mongo (shortcuts_<hotelId> – името на колекцията се подава от ShortcutRepository):
 //   { shortcutId, label: { bg: "Паркинг", en: "Parking" }, category, isActive, action: { type: "knowledge", knowledgeIds: [...] } }
 //   { shortcutId, label: { bg: "Моите резервации", en: "My bookings" }, category, isActive, action: { type: "tool", tool: "showMyBookings" } }
-@Document(collection = "shortcuts_#hotelId#") // Динамично мапване или без анотация, ако ползваш MongoTemplate с изрично име
+@Document
 public class Shortcut {
 
     @Id

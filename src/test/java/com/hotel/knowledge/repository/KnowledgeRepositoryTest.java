@@ -1,12 +1,13 @@
 package com.hotel.knowledge.repository;
 
-import org.bson.Document;
+import com.hotel.knowledge.model.KnowledgeDocument;
 import org.bson.types.ObjectId;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -20,19 +21,31 @@ class KnowledgeRepositoryTest {
     private final KnowledgeRepository repository = new KnowledgeRepository(mongoTemplate);
 
     @Test
-    void textsComeInTheOrderOfTheButtonAndMissingOnesAreSkipped() {
+    void documentsComeInTheOrderOfTheButtonAndMissingOnesAreSkipped() {
         ObjectId first = new ObjectId();
         ObjectId second = new ObjectId();
         ObjectId missing = new ObjectId();
-        ObjectId empty = new ObjectId();
         // Mongo връща документите в свой ред
-        when(mongoTemplate.find(any(Query.class), eq(Document.class), eq("knowledge_seven_stars"))).thenReturn(List.of(
-                new Document("_id", empty).append("text", " "),
-                new Document("_id", second).append("text", "Втори"),
-                new Document("_id", first).append("text", "Първи")));
+        when(mongoTemplate.find(any(Query.class), eq(KnowledgeDocument.class), eq("knowledge_seven_stars")))
+                .thenReturn(List.of(document(second, "Втори"), document(first, "Първи")));
 
-        List<String> texts = repository.findTextsByIds(List.of(first, missing, second, empty), "knowledge_seven_stars");
+        List<KnowledgeDocument> documents = repository.findByIds("seven_stars", List.of(first, missing, second));
 
-        assertThat(texts).containsExactly("Първи", "Втори");
+        assertThat(documents).extracting(KnowledgeDocument::getText).containsExactly("Първи", "Втори");
+    }
+
+    @Test
+    void hotelsAreTheKnowledgeCollections() {
+        when(mongoTemplate.getCollectionNames())
+                .thenReturn(Set.of("knowledge_seven_stars", "shortcuts_seven_stars", "logs_fake", "shortcuts_other"));
+
+        assertThat(repository.findHotelIds()).containsExactly("seven_stars");
+    }
+
+    private static KnowledgeDocument document(ObjectId id, String text) {
+        KnowledgeDocument document = new KnowledgeDocument();
+        document.setId(id.toHexString());
+        document.setText(text);
+        return document;
     }
 }

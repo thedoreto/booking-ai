@@ -1,14 +1,10 @@
 package com.hotel.langchain.log;
 
-import org.bson.Document;
+import com.hotel.langchain.model.ChatLog;
+import com.hotel.langchain.repository.ChatLogRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.index.IndexOperations;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.UpdateDefinition;
 
-import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
@@ -17,28 +13,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 class ChatLogServiceTest {
 
-    private final MongoTemplate mongoTemplate = mock(MongoTemplate.class);
+    private final ChatLogRepository repository = mock(ChatLogRepository.class);
 
     @Test
     void writesOnOwnThreadWithoutBlockingAndDropsEntriesWhenQueueIsFull() throws Exception {
-        when(mongoTemplate.indexOps(anyString())).thenReturn(mock(IndexOperations.class));
         // Бавен Mongo: първият запис чака, докато тестът не го пусне
         CountDownLatch mongoReleased = new CountDownLatch(1);
         Queue<String> writerThreads = new ConcurrentLinkedQueue<>();
-        when(mongoTemplate.insert(any(Map.class), anyString())).thenAnswer(invocation -> {
+        doAnswer(invocation -> {
             writerThreads.add(Thread.currentThread().getName());
             mongoReleased.await();
             return null;
-        });
-        ChatLogService service = new ChatLogService(mongoTemplate);
+        }).when(repository).insert(anyString(), any(ChatLog.class));
+        ChatLogService service = new ChatLogService(repository);
 
         long startNanos = System.nanoTime();
         for (int i = 0; i < 1_100; i++) {
@@ -51,60 +46,49 @@ class ChatLogServiceTest {
 
         assertThat(elapsedMs).isLessThan(1_000);
         // 1 записан + 1000 от опашката; останалите 99 са изпуснати без грешка
-        verify(mongoTemplate, times(1_001)).insert(any(Map.class), eq("logs_seven_stars"));
+        verify(repository, times(1_001)).insert(eq("seven_stars"), any(ChatLog.class));
         assertThat(writerThreads).isNotEmpty().containsOnly("chat-log-writer");
     }
 
     @Test
     void skipsEntriesWithoutHotelId() throws Exception {
-        ChatLogService service = new ChatLogService(mongoTemplate);
+        ChatLogService service = new ChatLogService(repository);
 
         service.log(null, ChatLogEntry.start(ChatLogEntry.CHAT, "user-1"));
         service.log(" ", ChatLogEntry.start(ChatLogEntry.CHAT, "user-1"));
         service.shutdown();
 
-        verify(mongoTemplate, never()).insert(any(Map.class), anyString());
+        verify(repository, never()).insert(anyString(), any(ChatLog.class));
     }
 
     @Test
-    void upsertsFlowStepByFlowId() throws Exception {
-        when(mongoTemplate.indexOps(anyString())).thenReturn(mock(IndexOperations.class));
-        ChatLogService service = new ChatLogService(mongoTemplate);
+    void flowStepCarriesFlowAndStep() throws Exception {
+        ChatLogService service = new ChatLogService(repository);
 
         service.logStep("seven_stars", "flow-1", ChatFlow.NEW_BOOKING, ChatFlow.STARTED_BY_BUTTON,
                 ChatFlow.ROOMS_SHOWN, ChatLogEntry.start(ChatLogEntry.SEARCH, "user-1").detail("roomsFound", 2));
         service.shutdown();
 
-        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
-        ArgumentCaptor<UpdateDefinition> update = ArgumentCaptor.forClass(UpdateDefinition.class);
-        verify(mongoTemplate).upsert(query.capture(), update.capture(), eq("logs_seven_stars"));
-
-        assertThat(query.getValue().getQueryObject()).containsEntry("flowId", "flow-1");
-        Document changes = update.getValue().getUpdateObject();
-        // Първата стъпка задава вида и началото; всяка стъпка сменя статуса и се добавя към steps
-        assertThat(changes.get("$setOnInsert", Document.class))
-                .containsEntry("type", "new_booking")
-                .containsEntry("startedBy", "button")
-                .containsEntry("userId", "user-1")
-                .containsEntry("hotelId", "seven_stars")
-                .containsKey("timestamp");
-        assertThat(changes.get("$set", Document.class))
-                .containsEntry("status", "rooms_shown")
-                .containsKey("updatedAt");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> step = (Map<String, Object>) changes.get("$push", Document.class).get("steps");
-        assertThat(step).containsEntry("step", "search").containsEntry("roomsFound", 2);
-        assertThat(changes).doesNotContainKey("$inc");
+        ArgumentCaptor<ChatLog> flow = ArgumentCaptor.forClass(ChatLog.class);
+        ArgumentCaptor<ChatLog.Step> step = ArgumentCaptor.forClass(ChatLog.Step.class);
+        verify(repository).addFlowStep(eq("seven_stars"), flow.capture(), step.capture());
+        assertThat(flow.getValue().getFlowId()).isEqualTo("flow-1");
+        assertThat(flow.getValue().getType()).isEqualTo("new_booking");
+        assertThat(flow.getValue().getStartedBy()).isEqualTo("button");
+        assertThat(flow.getValue().getStatus()).isEqualTo("rooms_shown");
+        assertThat(flow.getValue().getUserId()).isEqualTo("user-1");
+        assertThat(step.getValue().getStep()).isEqualTo("search");
+        assertThat(step.getValue().getDetails()).containsEntry("roomsFound", 2);
     }
 
     @Test
     void skipsFlowStepWithoutFlowId() throws Exception {
-        ChatLogService service = new ChatLogService(mongoTemplate);
+        ChatLogService service = new ChatLogService(repository);
 
         service.logStep("seven_stars", null, ChatFlow.NEW_BOOKING, ChatFlow.STARTED_BY_BUTTON,
                 ChatFlow.ROOMS_SHOWN, ChatLogEntry.start(ChatLogEntry.SEARCH, "user-1"));
         service.shutdown();
 
-        verify(mongoTemplate, never()).upsert(any(Query.class), any(UpdateDefinition.class), anyString());
+        verify(repository, never()).addFlowStep(anyString(), any(ChatLog.class), any(ChatLog.Step.class));
     }
 }

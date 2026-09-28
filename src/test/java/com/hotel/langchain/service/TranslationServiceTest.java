@@ -2,7 +2,7 @@ package com.hotel.langchain.service;
 
 import com.hotel.langchain.model.Translation;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import com.hotel.langchain.repository.TranslationRepository;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -21,9 +21,9 @@ import static org.mockito.Mockito.when;
 
 class TranslationServiceTest {
 
-    private final MongoTemplate mongoTemplate = mock(MongoTemplate.class);
+    private final TranslationRepository repository = mock(TranslationRepository.class);
     private final MutableClock clock = new MutableClock();
-    private final TranslationService translations = new TranslationService(mongoTemplate, clock);
+    private final TranslationService translations = new TranslationService(repository, clock);
 
     @Test
     void messageFillsParamsInTheRequestedLanguage() {
@@ -109,15 +109,15 @@ class TranslationServiceTest {
 
         clock.advance(Duration.ofMinutes(1));
         assertThat(translations.translate("Апартамент", "en")).isEqualTo("Apartment");
-        verify(mongoTemplate, times(2)).findAll(Translation.class);
+        verify(repository, times(2)).findAll();
 
-        when(mongoTemplate.findAll(Translation.class)).thenThrow(new RuntimeException("Atlas down"));
+        when(repository.findAll()).thenThrow(new RuntimeException("Atlas down"));
         clock.advance(Duration.ofMinutes(5));
         assertThat(translations.translate("Апартамент", "en")).isEqualTo("Apartment");
     }
 
     private void translations(Translation... translations) {
-        when(mongoTemplate.findAll(Translation.class)).thenReturn(List.of(translations));
+        when(repository.findAll()).thenReturn(List.of(translations));
     }
 
     private static Translation translation(String key, Map<String, String> texts) {

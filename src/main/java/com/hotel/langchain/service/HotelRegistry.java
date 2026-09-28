@@ -1,8 +1,7 @@
 package com.hotel.langchain.service;
 
-import com.hotel.knowledge.service.KnowledgeService;
+import com.hotel.knowledge.repository.KnowledgeRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -10,7 +9,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 // Кои хотели съществуват: хотел е всеки, който има колекция knowledge_<hotelId>.
 // hotelId идва от body-то без проверка, а логовете пишат в logs_<hotelId> – без тази проверка
@@ -23,18 +21,18 @@ public class HotelRegistry {
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
     private static final Duration REFRESH_AFTER = Duration.ofMinutes(1);
 
-    private final MongoTemplate mongoTemplate;
+    private final KnowledgeRepository knowledgeRepository;
     private final Clock clock;
     private volatile Set<String> knownHotels = Set.of();
     private volatile Instant loadedAt;
 
     @Autowired
-    public HotelRegistry(MongoTemplate mongoTemplate) {
-        this(mongoTemplate, Clock.systemUTC());
+    public HotelRegistry(KnowledgeRepository knowledgeRepository) {
+        this(knowledgeRepository, Clock.systemUTC());
     }
 
-    HotelRegistry(MongoTemplate mongoTemplate, Clock clock) {
-        this.mongoTemplate = mongoTemplate;
+    HotelRegistry(KnowledgeRepository knowledgeRepository, Clock clock) {
+        this.knowledgeRepository = knowledgeRepository;
         this.clock = clock;
     }
 
@@ -56,10 +54,7 @@ public class HotelRegistry {
             return;
         }
         try {
-            knownHotels = mongoTemplate.getCollectionNames().stream()
-                    .filter(name -> name.startsWith(KnowledgeService.COLLECTION_PREFIX))
-                    .map(name -> name.substring(KnowledgeService.COLLECTION_PREFIX.length()))
-                    .collect(Collectors.toUnmodifiableSet());
+            knownHotels = knowledgeRepository.findHotelIds();
         } catch (Exception e) {
             // Остава старият списък; следващият опит – след REFRESH_AFTER
             System.err.println("Could not load hotels from Mongo: " + e);

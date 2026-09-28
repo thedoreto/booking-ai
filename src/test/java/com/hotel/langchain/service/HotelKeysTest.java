@@ -2,7 +2,7 @@ package com.hotel.langchain.service;
 
 import com.hotel.langchain.model.HotelSettings;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import com.hotel.langchain.repository.HotelSettingsRepository;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -25,9 +25,9 @@ class HotelKeysTest {
     private static final KeyPair SEVEN_STARS = keyPair();
     private static final KeyPair ROBBERS = keyPair();
 
-    private final MongoTemplate mongoTemplate = mock(MongoTemplate.class);
+    private final HotelSettingsRepository repository = mock(HotelSettingsRepository.class);
     private final MutableClock clock = new MutableClock();
-    private final HotelKeys hotelKeys = new HotelKeys(mongoTemplate, clock);
+    private final HotelKeys hotelKeys = new HotelKeys(repository, clock);
 
     @Test
     void readsPemAndSingleLineBase64() {
@@ -59,7 +59,7 @@ class HotelKeysTest {
 
         clock.advance(Duration.ofMinutes(1));
         assertThat(hotelKeys.publicKey("seven_stars")).contains(ROBBERS.getPublic());
-        verify(mongoTemplate, times(2)).findAll(HotelSettings.class);
+        verify(repository, times(2)).findAll();
     }
 
     @Test
@@ -69,7 +69,7 @@ class HotelKeysTest {
         for (int i = 0; i < 100; i++) {
             assertThat(hotelKeys.publicKey("40_robbers")).isEmpty();
         }
-        verify(mongoTemplate, times(1)).findAll(HotelSettings.class);
+        verify(repository, times(1)).findAll();
 
         // Добавен ключ се вижда след минута
         hotels(hotel("seven_stars", pem(SEVEN_STARS)), hotel("40_robbers", pem(ROBBERS)));
@@ -82,14 +82,14 @@ class HotelKeysTest {
         hotels(hotel("seven_stars", pem(SEVEN_STARS)));
         hotelKeys.publicKey("seven_stars");
 
-        when(mongoTemplate.findAll(HotelSettings.class)).thenThrow(new RuntimeException("Atlas down"));
+        when(repository.findAll()).thenThrow(new RuntimeException("Atlas down"));
         clock.advance(Duration.ofMinutes(5));
 
         assertThat(hotelKeys.publicKey("seven_stars")).contains(SEVEN_STARS.getPublic());
     }
 
     private void hotels(HotelSettings... hotels) {
-        when(mongoTemplate.findAll(HotelSettings.class)).thenReturn(List.of(hotels));
+        when(repository.findAll()).thenReturn(List.of(hotels));
     }
 
     private static HotelSettings hotel(String hotelId, String publicKey) {

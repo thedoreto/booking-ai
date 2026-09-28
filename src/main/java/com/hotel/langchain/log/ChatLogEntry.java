@@ -1,13 +1,14 @@
 package com.hotel.langchain.log;
 
+import com.hotel.langchain.model.ChatLog;
+
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
-// Една заявка към booking-ai – основа за отчетите в админ страницата. Записва се по два начина:
-// - отделен запис в logs_<hotelId> (въпрос в чата, бутон със знание):
-//   { timestamp, hotelId, userId, type, outcome, errorType, durationMs, userMessage, reply, gemini, details }
-// - стъпка в действие от няколко заявки (виж ChatFlow): { step, at, outcome, errorType, durationMs, ... }
+// Една заявка към booking-ai – основа за отчетите в админ страницата. Събира данните по време на заявката
+// и накрая става отделен запис в logs_<hotelId> (ChatLog) или стъпка в действие от няколко заявки (ChatLog.Step).
 public class ChatLogEntry {
 
     // type на отделен запис / step на стъпка в действие
@@ -45,7 +46,7 @@ public class ChatLogEntry {
     private String errorType;
     private String userMessage;
     private String reply;
-    private Map<String, Object> gemini;
+    private ChatLog.Gemini gemini;
     private final Map<String, Object> details = new LinkedHashMap<>();
 
     private ChatLogEntry(String type) {
@@ -82,13 +83,13 @@ public class ChatLogEntry {
     // Извикванията, токените и tools на Gemini за заявката (null – заявката не е викала модела)
     public ChatLogEntry gemini(GeminiUsageTracker.Usage usage) {
         if (usage != null && usage.calls() > 0) {
-            gemini = new LinkedHashMap<>();
-            gemini.put("calls", usage.calls());
-            gemini.put("errors", usage.errors());
-            gemini.put("inputTokens", usage.inputTokens());
-            gemini.put("outputTokens", usage.outputTokens());
+            gemini = new ChatLog.Gemini();
+            gemini.setCalls(usage.calls());
+            gemini.setErrors(usage.errors());
+            gemini.setInputTokens(usage.inputTokens());
+            gemini.setOutputTokens(usage.outputTokens());
             if (!usage.tools().isEmpty()) {
-                gemini.put("tools", usage.tools());
+                gemini.setTools(List.copyOf(usage.tools()));
             }
         }
         return this;
@@ -109,61 +110,36 @@ public class ChatLogEntry {
         return userId;
     }
 
-    Instant timestamp() {
-        return timestamp;
-    }
-
-    Map<String, Object> gemini() {
-        return gemini;
-    }
-
     // Стъпка в действие (ChatFlow). Отговорът се пази само при неуспех – иначе е ясен от стъпката.
-    Map<String, Object> toStepDocument() {
-        Map<String, Object> step = new LinkedHashMap<>();
-        step.put("step", type);
-        step.put("at", timestamp);
-        step.put("outcome", outcome);
-        if (errorType != null) {
-            step.put("errorType", errorType);
-        }
-        step.put("durationMs", elapsedMs());
-        if (userMessage != null) {
-            step.put("userMessage", truncate(userMessage));
-        }
-        if (reply != null && !OK.equals(outcome)) {
-            step.put("reply", truncate(reply));
-        }
-        if (gemini != null) {
-            step.put("gemini", gemini);
-        }
-        step.putAll(details);
+    ChatLog.Step toStep() {
+        ChatLog.Step step = new ChatLog.Step();
+        step.setStep(type);
+        step.setAt(timestamp);
+        step.setOutcome(outcome);
+        step.setErrorType(errorType);
+        step.setDurationMs(elapsedMs());
+        step.setUserMessage(truncate(userMessage));
+        step.setReply(OK.equals(outcome) ? null : truncate(reply));
+        step.setGemini(gemini);
+        step.setDetails(details.isEmpty() ? null : new LinkedHashMap<>(details));
         return step;
     }
 
-    Map<String, Object> toDocument(String hotelId) {
-        Map<String, Object> doc = new LinkedHashMap<>();
-        doc.put("timestamp", timestamp);
-        doc.put("hotelId", hotelId);
-        doc.put("userId", userId);
-        doc.put("type", type);
-        doc.put("outcome", outcome);
-        if (errorType != null) {
-            doc.put("errorType", errorType);
-        }
-        doc.put("durationMs", elapsedMs());
-        if (userMessage != null) {
-            doc.put("userMessage", truncate(userMessage));
-        }
-        if (reply != null) {
-            doc.put("reply", truncate(reply));
-        }
-        if (gemini != null) {
-            doc.put("gemini", gemini);
-        }
-        if (!details.isEmpty()) {
-            doc.put("details", details);
-        }
-        return doc;
+    // Отделен запис
+    ChatLog toChatLog(String hotelId) {
+        ChatLog log = new ChatLog();
+        log.setTimestamp(timestamp);
+        log.setHotelId(hotelId);
+        log.setUserId(userId);
+        log.setType(type);
+        log.setOutcome(outcome);
+        log.setErrorType(errorType);
+        log.setDurationMs(elapsedMs());
+        log.setUserMessage(truncate(userMessage));
+        log.setReply(truncate(reply));
+        log.setGemini(gemini);
+        log.setDetails(details.isEmpty() ? null : new LinkedHashMap<>(details));
+        return log;
     }
 
     private long elapsedMs() {
@@ -171,6 +147,9 @@ public class ChatLogEntry {
     }
 
     private static String truncate(String text) {
+        if (text == null) {
+            return null;
+        }
         return text.length() <= MAX_TEXT_LENGTH ? text : text.substring(0, MAX_TEXT_LENGTH) + "…";
     }
 }

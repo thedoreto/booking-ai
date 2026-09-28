@@ -5,6 +5,8 @@ import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.util.*;
 
+// Едно знание за хотела. В Mongo (knowledge_<hotelId> – името на колекцията се подава от KnowledgeRepository):
+//   { _id: <ObjectId>, text, title, category, tags: [...], source, embedding: [...], metadata: {...} }
 @Document
 public class KnowledgeDocument {
 
@@ -22,6 +24,8 @@ public class KnowledgeDocument {
         // REQUIRED by Spring Data Mongo
     }
 
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
     public String getText() { return text; }
     public String getTitle() { return title; }
     public List<Double> getEmbedding() { return embedding; }

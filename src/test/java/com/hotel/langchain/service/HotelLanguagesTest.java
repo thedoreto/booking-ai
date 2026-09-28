@@ -4,7 +4,7 @@ import com.hotel.langchain.service.HotelLanguages.Language;
 import com.hotel.langchain.service.HotelLanguages.Languages;
 import com.hotel.langchain.model.HotelSettings;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import com.hotel.langchain.repository.HotelSettingsRepository;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -21,9 +21,9 @@ import static org.mockito.Mockito.when;
 
 class HotelLanguagesTest {
 
-    private final MongoTemplate mongoTemplate = mock(MongoTemplate.class);
+    private final HotelSettingsRepository repository = mock(HotelSettingsRepository.class);
     private final MutableClock clock = new MutableClock();
-    private final HotelLanguages hotelLanguages = new HotelLanguages(mongoTemplate, clock);
+    private final HotelLanguages hotelLanguages = new HotelLanguages(repository, clock);
 
     @Test
     void readsLanguagesInOrderWithDefault() {
@@ -97,15 +97,15 @@ class HotelLanguagesTest {
 
         clock.advance(Duration.ofMinutes(1));
         assertThat(hotelLanguages.of("seven_stars").languages()).hasSize(2);
-        verify(mongoTemplate, times(2)).findAll(HotelSettings.class);
+        verify(repository, times(2)).findAll();
 
-        when(mongoTemplate.findAll(HotelSettings.class)).thenThrow(new RuntimeException("Atlas down"));
+        when(repository.findAll()).thenThrow(new RuntimeException("Atlas down"));
         clock.advance(Duration.ofMinutes(5));
         assertThat(hotelLanguages.of("seven_stars").languages()).hasSize(2);
     }
 
     private void hotels(HotelSettings... hotels) {
-        when(mongoTemplate.findAll(HotelSettings.class)).thenReturn(List.of(hotels));
+        when(repository.findAll()).thenReturn(List.of(hotels));
     }
 
     // Без езици – хотел без поле languages

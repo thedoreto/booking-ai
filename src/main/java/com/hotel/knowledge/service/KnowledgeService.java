@@ -13,9 +13,6 @@ import java.util.stream.Collectors;
 @Service
 public class KnowledgeService {
 
-    // Знанията на всеки хотел са в колекция knowledge_<hotelId>
-    public static final String COLLECTION_PREFIX = "knowledge_";
-
     private final KnowledgeRepository knowledgeRepo;
     private final EmbeddingModel embeddingModel;
 
@@ -31,12 +28,18 @@ public class KnowledgeService {
             return List.of();
         }
         List<ObjectId> validIds = ids.stream().filter(Objects::nonNull).toList();
-        return validIds.isEmpty() ? List.of() : knowledgeRepo.findTextsByIds(validIds, COLLECTION_PREFIX + hotelId);
+        if (validIds.isEmpty()) {
+            return List.of();
+        }
+        // Документ без text се пропуска
+        return knowledgeRepo.findByIds(hotelId, validIds).stream()
+                .map(KnowledgeDocument::getText)
+                .filter(text -> text != null && !text.isBlank())
+                .toList();
     }
 
-    public List<KnowledgeDocument> findRelevant(
-            String question,
-            String collectionName) {
+    // RAG: най-близките по смисъл знания на хотела до въпроса (vector search в knowledge_<hotelId>)
+    public List<KnowledgeDocument> findRelevant(String hotelId, String question) {
      //   testKnowledge();
         var embedding = embeddingModel.embed(question).content();
 
@@ -45,13 +48,10 @@ public class KnowledgeService {
                 .map(Float::doubleValue)
                 .toList();
 
-        var result = knowledgeRepo.searchByVector(
-                vector,
-                collectionName
-        );
+        var result = knowledgeRepo.searchByVector(hotelId, vector);
 
         System.out.println("Question: " + question);
-        System.out.println("Collection: " + collectionName);
+        System.out.println("Hotel: " + hotelId);
         System.out.println("Found: " + result.size());
 
         return result;
