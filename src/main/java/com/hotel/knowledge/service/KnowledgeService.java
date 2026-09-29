@@ -72,6 +72,11 @@ public class KnowledgeService {
         return knowledgeRepo.findAll(hotelId);
     }
 
+    // Документите, които съществуват, в реда на ids (без embedding)
+    public List<KnowledgeDocument> findByIds(String hotelId, List<ObjectId> ids) {
+        return ids.isEmpty() ? List.of() : knowledgeRepo.findByIds(hotelId, ids);
+    }
+
     // Един документ (без embedding); празно – невалиден id или няма такъв
     public Optional<KnowledgeDocument> findById(String hotelId, String id) {
         ObjectId objectId = toObjectId(id);

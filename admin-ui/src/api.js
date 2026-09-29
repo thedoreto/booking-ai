@@ -104,3 +104,37 @@ export function saveTranslation(token, id, language, text) {
 export function translateAll(token, id) {
   return request(`/knowledge/${encodeURIComponent(id)}/translate-all`, { ...authorized(token), method: 'POST' })
 }
+
+// Бутоните на хотела, и неактивните, в реда в чата:
+// [{ shortcutId, label: { bg, en }, category, isActive, guestVisible, action: { type, tool, knowledgeIds }, order }]
+export function shortcuts(token) {
+  return request('/shortcuts', authorized(token))
+}
+
+// Tool-овете, които бутон може да пусне: [{ name, description }]
+export function shortcutTools(token) {
+  return request('/shortcuts/tools', authorized(token))
+}
+
+// Нов бутон { shortcutId, label, category, isActive, guestVisible, action } → създаденият (отива последен)
+export function createShortcut(token, changes) {
+  return request('/shortcuts', { ...authorized(token), method: 'POST', body: JSON.stringify(changes) })
+}
+
+// Промяна на бутон (shortcutId не се сменя) → новият бутон
+export function updateShortcut(token, shortcutId, changes) {
+  return request(`/shortcuts/${encodeURIComponent(shortcutId)}`, {
+    ...authorized(token),
+    method: 'PUT',
+    body: JSON.stringify(changes),
+  })
+}
+
+export function deleteShortcut(token, shortcutId) {
+  return request(`/shortcuts/${encodeURIComponent(shortcutId)}`, { ...authorized(token), method: 'DELETE' })
+}
+
+// Новият ред в чата – всички shortcutId → бутоните в новия ред
+export function reorderShortcuts(token, shortcutIds) {
+  return request('/shortcuts/order', { ...authorized(token), method: 'PUT', body: JSON.stringify({ shortcutIds }) })
+}

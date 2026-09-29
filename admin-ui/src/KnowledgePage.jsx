@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Dialog,
-  DialogActions, DialogContent, DialogContentText, DialogTitle, InputAdornment, TextField, Tooltip, Typography,
+  DialogActions, DialogContent, DialogContentText, DialogTitle, InputAdornment, Link, TextField, Tooltip, Typography,
 } from '@mui/material'
 import { deleteKnowledge, getToken, knowledge, settings } from './api.js'
 import KnowledgeEditor from './KnowledgeEditor.jsx'
 import TranslationsSection from './TranslationsSection.jsx'
+import { knowledgeTitle } from './knowledgeTitle.js'
 
 const NO_CATEGORY = 'Без категория'
 
 // Знанията на хотела (knowledge_<hotelId>): групирани по категория, търсене по заглавие, текст и етикети; добавяне,
 // редакция на място и изтриване. При всяко знание пише кои бутони го ползват – такова знание не се трие.
-export default function KnowledgePage({ onUnauthorized }) {
+export default function KnowledgePage({ onOpenShortcut, onUnauthorized }) {
   const [documents, setDocuments] = useState(null)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
@@ -112,7 +113,7 @@ export default function KnowledgePage({ onUnauthorized }) {
           {docs.map((doc) => (
             <KnowledgeItem key={doc.id} doc={doc} categories={categories} allTags={allTags}
               translationLanguages={translationLanguages} onSaved={handleSaved} onDeleted={handleDeleted}
-              onUnauthorized={onUnauthorized} />
+              onOpenShortcut={onOpenShortcut} onUnauthorized={onUnauthorized} />
           ))}
         </Box>
       ))}
@@ -120,7 +121,9 @@ export default function KnowledgePage({ onUnauthorized }) {
   )
 }
 
-function KnowledgeItem({ doc, categories, allTags, translationLanguages, onSaved, onDeleted, onUnauthorized }) {
+function KnowledgeItem({
+  doc, categories, allTags, translationLanguages, onSaved, onDeleted, onOpenShortcut, onUnauthorized,
+}) {
   const [editing, setEditing] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const usedBy = doc.usedBy || []
@@ -130,7 +133,7 @@ function KnowledgeItem({ doc, categories, allTags, translationLanguages, onSaved
     <Accordion disableGutters>
       <AccordionSummary expandIcon="▾">
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', minWidth: 0 }}>
-          <Typography sx={{ fontWeight: 500 }}>{doc.title || preview(doc.text)}</Typography>
+          <Typography sx={{ fontWeight: 500 }}>{knowledgeTitle(doc)}</Typography>
           {(doc.tags || []).map((tag) => (
             <Chip key={tag} label={tag} size="small" variant="outlined" />
           ))}
@@ -160,7 +163,13 @@ function KnowledgeItem({ doc, categories, allTags, translationLanguages, onSaved
             <Typography sx={{ whiteSpace: 'pre-wrap', mb: 2 }}>{doc.text || '—'}</Typography>
             <Typography variant="body2" sx={{ mb: 1 }}>
               {usedBy.length > 0
-                ? <>Ползва се от {usedBy.length === 1 ? 'бутона' : 'бутоните'}: <strong>{labels(usedBy)}</strong></>
+                ? <>Ползва се от {usedBy.length === 1 ? 'бутона' : 'бутоните'}: {usedBy.map((ref, i) => (
+                  <span key={ref.shortcutId}>
+                    {i > 0 && ', '}
+                    <Link component="button" variant="body2" sx={{ fontWeight: 600, verticalAlign: 'baseline' }}
+                      onClick={() => onOpenShortcut(ref.shortcutId)}>{ref.label}</Link>
+                  </span>
+                ))}</>
                 : <Box component="span" sx={{ color: 'text.secondary' }}>Не се ползва от бутон.</Box>}
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
@@ -233,7 +242,7 @@ function DeleteDialog({ open, doc, onClose, onDeleted, onUsed, onUnauthorized })
       <DialogTitle>Изтриване на знание</DialogTitle>
       <DialogContent>
         <DialogContentText>
-          „{doc.title || preview(doc.text)}“ ще бъде изтрито завинаги.
+          „{knowledgeTitle(doc)}“ ще бъде изтрито завинаги.
         </DialogContentText>
         {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
       </DialogContent>
@@ -282,11 +291,4 @@ function groupByCategory(documents) {
 
 function distinct(values) {
   return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'bg'))
-}
-
-function preview(text) {
-  if (!text) {
-    return '(без заглавие)'
-  }
-  return text.length > 80 ? `${text.slice(0, 80)}…` : text
 }

@@ -6,7 +6,9 @@ import org.springframework.stereotype.Component;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -16,6 +18,9 @@ import java.util.Optional;
 // Действие за UI (календар, списък с резервации) tool-ът записва сам в TenantContext.
 @Component
 public class ShortcutToolRunner {
+
+    // Tool за избор в админ панела: името и описанието от @Tool (промптът за модела)
+    public record ToolInfo(String name, String description) {}
 
     private final HotelTools hotelTools;
     private final Map<String, Method> toolsByName = new HashMap<>();
@@ -28,6 +33,18 @@ public class ShortcutToolRunner {
                 toolsByName.put(tool.name().isBlank() ? method.getName() : tool.name(), method);
             }
         }
+    }
+
+    // Всички tool-ове, които бутон може да пусне, по име
+    public List<ToolInfo> tools() {
+        return toolsByName.entrySet().stream()
+                .map(e -> new ToolInfo(e.getKey(), String.join(" ", e.getValue().getAnnotation(Tool.class).value())))
+                .sorted(Comparator.comparing(ToolInfo::name))
+                .toList();
+    }
+
+    public boolean hasTool(String toolName) {
+        return toolName != null && toolsByName.containsKey(toolName);
     }
 
     // Текстът, който tool-ът връща; празно – няма такъв tool

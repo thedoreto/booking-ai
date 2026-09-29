@@ -5,15 +5,21 @@ import org.bson.types.ObjectId;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.Field;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
 // Бутон в чата – само препратка: action казва към какво сочи (знание или tool).
 // В Mongo (shortcuts_<hotelId> – името на колекцията се подава от ShortcutRepository):
-//   { shortcutId, label: { bg: "Паркинг", en: "Parking" }, category, isActive, action: { type: "knowledge", knowledgeIds: [...] } }
+//   { shortcutId, label: { bg: "Паркинг", en: "Parking" }, category, isActive, order: 1, action: { type: "knowledge", knowledgeIds: [...] } }
 //   { shortcutId, label: { bg: "Моите резервации", en: "My bookings" }, category, isActive, action: { type: "tool", tool: "showMyBookings" } }
 @Document
 public class Shortcut {
+
+    // Редът в чата: по order, бутоните без order – накрая, по shortcutId
+    public static final Comparator<Shortcut> DISPLAY_ORDER = Comparator
+            .comparing(Shortcut::getOrder, Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing(Shortcut::getShortcutId, Comparator.nullsLast(Comparator.naturalOrder()));
 
     @Id
     private String id;
@@ -27,6 +33,8 @@ public class Shortcut {
     private Action action;
     // Видимост за гост (без вход); липсващо поле = гостът вижда бутона
     private Guest guest;
+    // Място в чата (1, 2, ...); задава го админ панелът
+    private Integer order;
 
     // В Mongo: guest: { isActive } – isActive: false – гостът не вижда бутона.
     // Какво става при гост, решава tool-ът (същото от бутона и от чата), не бутонът.
@@ -90,6 +98,9 @@ public class Shortcut {
 
     public Guest getGuest() { return guest; }
     public void setGuest(Guest guest) { this.guest = guest; }
+
+    public Integer getOrder() { return order; }
+    public void setOrder(Integer order) { this.order = order; }
 
     // Гостът вижда бутона, освен ако guest.isActive е false
     @JsonIgnore

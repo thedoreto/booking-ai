@@ -39,6 +39,17 @@ class ShortcutToolRunnerTest {
     }
 
     @Test
+    void listsAllToolsByNameWithTheirDescription() {
+        assertThat(runner.tools()).extracting(ShortcutToolRunner.ToolInfo::name).containsExactly(
+                "getAllRooms", "getAvailableRoomsByDates", "getReservations", "getRoomTypes",
+                "getStrawberryMuffinRecipe", "showMyBookings");
+        assertThat(runner.tools()).allSatisfy(tool -> assertThat(tool.description()).isNotBlank());
+        assertThat(runner.hasTool("showMyBookings")).isTrue();
+        assertThat(runner.hasTool("dropDatabase")).isFalse();
+        assertThat(runner.hasTool(null)).isFalse();
+    }
+
+    @Test
     void toolThatOpensTheCalendarLeavesUiAction() {
         assertThat(runner.run("getAvailableRoomsByDates")).contains("");
 
