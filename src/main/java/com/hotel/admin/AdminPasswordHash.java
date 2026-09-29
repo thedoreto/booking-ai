@@ -5,7 +5,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import java.io.Console;
 import java.util.Scanner;
 
-// Прави BCrypt хеш на парола за admin.passwordHash в hotel_settings (виж ADMIN_USERS.md).
+// Прави BCrypt хеш на парола за admin.passwordHash в hotel_settings (виж md/ADMIN_USERS.md).
 // Паролата се пише в конзолата, без да се вижда, и не остава в историята на командите.
 public class AdminPasswordHash {
 

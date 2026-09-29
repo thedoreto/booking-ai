@@ -64,6 +64,20 @@ Vite + React + MUI в `admin-ui/`; booking-ai я сервира на `/admin/` (
 | `POST /api/admin/knowledge/{id}/translate-all` | Gemini превежда основния текст на всички езици на хотела и ги записва (заменя и ръчните поправки) | `200` документът; `400 NO_LANGUAGES`; `404`; `503 TRANSLATION_FAILED` – нищо не е записано |
 | `DELETE /api/admin/knowledge/{id}` | Изтриване. **Знание, което се ползва от бутон, не се трие** – първо се сменя бутонът | `204`; `404 NOT_FOUND`; `409 { error: "IN_USE", usedBy: [...] }` |
 | `PUT /api/admin/knowledge/{id}` `{ title, category, tags, source, text }` | Редакция. Празните `title`, `category`, `source`, `tags` махат полето; `metadata` не се пипа. Нов embedding (Gemini) – само ако текстът е друг | `200` новият документ; `400 TEXT_REQUIRED` / `TEXT_TOO_LONG` (над 10 000 знака); `404 NOT_FOUND`; `503 EMBEDDING_FAILED` – Gemini не отговори, нищо не е записано |
+| `GET /api/admin/shortcuts` | Бутоните на хотела, и неактивните, в реда в чата | `200 [{ shortcutId, label: { bg, en }, category, isActive, guestVisible, action: { type, tool, knowledgeIds }, order }]` |
+| `GET /api/admin/shortcuts/tools` | Tool-овете, които бутон може да пусне (от `ShortcutToolRunner`) | `200 [{ name, description }]` (описанието е от `@Tool`) |
+| `POST /api/admin/shortcuts` `{ shortcutId, label, category, isActive, guestVisible, action }` | Нов бутон; отива последен, целият ред се записва наново (1..n) | `201` бутонът; `400`; `409 SHORTCUT_ID_TAKEN` |
+| `PUT /api/admin/shortcuts/{shortcutId}` `{ label, category, isActive, guestVisible, action }` | Редакция; `shortcutId` и `order` не се сменят | `200` бутонът; `400`; `404 NOT_FOUND` |
+| `PUT /api/admin/shortcuts/order` `{ shortcutIds: [...] }` | Новият ред в чата – всички бутони, всеки веднъж | `200` бутоните в новия ред; `400 INVALID_ORDER` – нищо не е записано |
+| `DELETE /api/admin/shortcuts/{shortcutId}` | Изтриване (знанията остават) | `204`; `404 NOT_FOUND` |
+
+## Бутоните
+- `shortcutId` е задължителен, уникален в хотела и не се сменя: латински букви, цифри, `_` и `-`, до 50 знака, не `order` и `tools` (адресите) – иначе `400 SHORTCUT_ID_REQUIRED` / `SHORTCUT_ID_INVALID`.
+- `label` – надписът на езика по подразбиране е задължителен (`LABEL_REQUIRED`), другите – само на езиците на хотела (`UNKNOWN_LANGUAGE`); празните се махат.
+- `action`: `{ type: "knowledge", knowledgeIds }` – поне едно знание, всички съществуват в `knowledge_<hotelId>`, в чата се показват в този ред (`KNOWLEDGE_REQUIRED` / `UNKNOWN_KNOWLEDGE`); `{ type: "tool", tool }` – само от `/tools` (`UNKNOWN_TOOL`); без тип – `ACTION_REQUIRED`.
+- `guestVisible: false` се записва като `guest: { isActive: false }`; `true` маха `guest`.
+- `order` – място в чата (`/api/shortcuts` подрежда по него; бутоните без `order` – накрая, по `shortcutId`). В страницата – стрелки ↑↓, всяка праща целия ред.
+- Уникалността на `shortcutId` се проверява в кода, без уникален индекс в Mongo.
 
 ## Преводите на знанията
 - `text` е на езика по подразбиране на хотела – от него са embedding-ът и RAG (въпросите в чата работят на всеки език и без преводи – Gemini отговаря на езика на чата). `translations: { en: "...", ... }` са само за **бутоните** със знание: бутонът връща превода на езика на чата, без превод – `text`.

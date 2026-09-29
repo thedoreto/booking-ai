@@ -2,6 +2,21 @@
 
 Планът и идеите за следващи сесии са в `PLAN.md`.
 
+## Сесия 2026-09-29 – админ панел: бутоните
+
+### Ред на бутоните в чата (не е комитнато)
+- Ново поле `order` в `Shortcut`; `Shortcut.DISPLAY_ORDER` – по `order`, бутоните без `order` накрая, по `shortcutId`. `ShortcutRepository.findAllByHotelId` подрежда в Java (Mongo слага липсващото поле най-отпред) – `/api/shortcuts` връща бутоните в реда от админа. Сегашните бутони нямат `order` (без миграция) – подреждат се при първото местене или нов бутон в админа.
+
+### API за бутоните в админа (не е комитнато)
+- `AdminShortcutController` / `AdminShortcutService`: `GET/POST /api/admin/shortcuts`, `PUT/DELETE /{shortcutId}`, `PUT /order`, `GET /tools`. Проверки и кодове на грешки – в `ADMIN_USERS.md`. Нов бутон отива последен и целият ред се записва наново (1..n).
+- `ShortcutRepository`: `findAll`, `findByShortcutId`, `insert`, `update` (`$set`/`$unset`, без `shortcutId` и `order`), `delete`, `updateOrder` (bulk). `ShortcutToolRunner.tools()` / `hasTool()`. `KnowledgeService.findByIds`.
+- Тестове: `AdminShortcutServiceTest` (7), нови в `ShortcutRepositoryTest` (5) и `ShortcutToolRunnerTest` (1).
+
+### Таб „Бутони“ в admin-ui (не е комитнато)
+- `ShortcutsPage.jsx` – списък в реда в чата, ↑↓ (целият ред към `/order`, при грешка се връща старият), chips „неактивен“, „скрит за гост“, „без EN“, добавяне, редакция на място, изтриване с потвърждение. `ShortcutEditor.jsx` – идентификатор (само при нов), надписи по езиците на хотела, категория, „Активен“, „Видим за гост“, действие: знания (Autocomplete по категория, в реда на избор) или tool (списък с описанието от `@Tool`). `knowledgeTitle.js` – общо за двата таба.
+- В „Знания“ бутоните в „Ползва се от…“ са връзки – отварят таба „Бутони“ и превъртат до бутона.
+- Проверено: `npm run lint`, `vite build`, unit тестовете на booking-ai без облак (244).
+
 ## Сесия 2026-09-28 (2) – commit на топиците, план за сигурността, вход в админ панела
 
 ### Commit-и на топиците и бележките
