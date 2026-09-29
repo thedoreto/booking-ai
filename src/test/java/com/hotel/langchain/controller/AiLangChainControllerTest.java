@@ -4,6 +4,7 @@ import com.hotel.knowledge.service.KnowledgeService;
 import com.hotel.langchain.assistant.Assistant;
 import com.hotel.langchain.context.ChatUser;
 import com.hotel.langchain.context.ChatUserResolver;
+import com.hotel.langchain.context.TenantContext;
 import com.hotel.langchain.context.TenantContext.UiAction;
 import com.hotel.langchain.controller.AiLangChainController.AvailableRoomsRequest;
 import com.hotel.langchain.controller.AiLangChainController.CancelBookingRequest;
@@ -150,6 +151,53 @@ class AiLangChainControllerTest {
         when(assistant.chat(any(), any(), any(), any(), any(), any(), eq(text))).thenReturn("Отговор");
 
         assertThat(controller.chat(chatRequest(KNOWN, null, text), null, null).reply()).isEqualTo("Отговор");
+    }
+
+    @Test
+    void knowledgeScoresOfTheQuestionGoToTheLog() {
+        // RAG (HotelContentRetriever) записва оценките по време на извикването към Gemini
+        when(assistant.chat(any(), any(), any(), any(), any(), any(), eq("Има ли паркинг?"))).thenAnswer(invocation -> {
+            TenantContext.setKnowledgeScores(List.of(0.83, 0.64));
+            return "Да.";
+        });
+
+        controller.chat(chatRequest(KNOWN, null, "Има ли паркинг?"), null, null);
+
+        ArgumentCaptor<ChatLogEntry> logEntry = ArgumentCaptor.forClass(ChatLogEntry.class);
+        verify(chatLogService).log(eq(KNOWN), logEntry.capture());
+        assertThat(logEntry.getValue().detail("knowledgeScores")).isEqualTo(List.of(0.83, 0.64));
+    }
+
+    @Test
+    void noInfoMarkerIsRemovedAndTheQuestionIsLoggedWithoutAnswer() {
+        when(assistant.chat(any(), any(), any(), any(), any(), any(), eq("Имате ли басейн?")))
+                .thenReturn(Assistant.NO_INFO_MARKER + " Нямам информация за басейн.");
+
+        NewChatResponse response = controller.chat(chatRequest(KNOWN, null, "Имате ли басейн?"), null, null);
+
+        assertThat(response.reply()).isEqualTo("Нямам информация за басейн.");
+        ArgumentCaptor<ChatLogEntry> logEntry = ArgumentCaptor.forClass(ChatLogEntry.class);
+        verify(chatLogService).log(eq(KNOWN), logEntry.capture());
+        assertThat(logEntry.getValue().outcome()).isEqualTo(ChatLogEntry.NO_RESULT);
+    }
+
+    @Test
+    void answerWithoutTheMarkerIsOk() {
+        when(assistant.chat(any(), any(), any(), any(), any(), any(), eq("Има ли паркинг?"))).thenReturn("Да, безплатен.");
+
+        assertThat(controller.chat(chatRequest(KNOWN, null, "Има ли паркинг?"), null, null).reply()).isEqualTo("Да, безплатен.");
+        ArgumentCaptor<ChatLogEntry> logEntry = ArgumentCaptor.forClass(ChatLogEntry.class);
+        verify(chatLogService).log(eq(KNOWN), logEntry.capture());
+        assertThat(logEntry.getValue().outcome()).isEqualTo(ChatLogEntry.OK);
+    }
+
+    @Test
+    void thePromptAsksForTheSameMarkerThatTheControllerRemoves() throws Exception {
+        String prompt = String.join("\n", Assistant.class
+                .getMethod("chat", String.class, String.class, String.class, String.class, String.class, String.class, String.class)
+                .getAnnotation(dev.langchain4j.service.SystemMessage.class).value());
+
+        assertThat(prompt).contains(Assistant.NO_INFO_MARKER);
     }
 
     @Test

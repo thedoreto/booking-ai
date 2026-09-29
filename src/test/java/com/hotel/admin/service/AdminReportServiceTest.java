@@ -78,6 +78,7 @@ class AdminReportServiceTest {
         assertThat(report.share()).isEqualTo(share);
         assertThat(report.limitPerMinute()).isEqualTo(5);
         assertThat(report.limitPerDay()).isEqualTo(200);
+        verify(repository).recentQuestions("40_robbers", Instant.parse("2026-09-22T10:00:00Z"), 20);
     }
 
     @Test

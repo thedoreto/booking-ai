@@ -201,8 +201,11 @@ public class AiLangChainController {
                 // Tool, който връща само текст на модела, е срещнал грешка (напр. timeout на бекенда)
                 if (TenantContext.getToolError() != null) {
                     logEntry.error(TenantContext.getToolError());
+                } else if (aiReply != null && aiReply.contains(Assistant.NO_INFO_MARKER)) {
+                    // Gemini няма отговора в знанията – „въпрос без отговор“ в отчетите
+                    logEntry.outcome(ChatLogEntry.NO_RESULT, null);
                 }
-                response = new NewChatResponse(aiReply, null);
+                response = new NewChatResponse(withoutNoInfoMarker(aiReply), null);
             }
 
         } catch (Exception e) {
@@ -227,8 +230,17 @@ public class AiLangChainController {
             chatLogService.geminiUsage(hotelId, GeminiUsage.tokens(GeminiUsage.CHAT, usage.model(),
                     usage.calls(), usage.errors(), usage.inputTokens(), usage.outputTokens()));
         }
+        if (TenantContext.getKnowledgeScores() != null) {
+            logEntry.detail("knowledgeScores", TenantContext.getKnowledgeScores());
+        }
         logEntry.reply(response.reply()).gemini(usage);
         return logOrStartFlow(hotelId, request.flowId(), ChatFlow.STARTED_BY_CHAT, logEntry, response);
+    }
+
+    // Маркерът не стига до госта – където и да го е сложил Gemini
+    private static String withoutNoInfoMarker(String reply) {
+        return reply == null || !reply.contains(Assistant.NO_INFO_MARKER)
+                ? reply : reply.replace(Assistant.NO_INFO_MARKER, "").trim();
     }
 
     // Хотелът е стигнал лимита на съобщенията към Gemini (GeminiBudget) – бутоните продължават да работят.

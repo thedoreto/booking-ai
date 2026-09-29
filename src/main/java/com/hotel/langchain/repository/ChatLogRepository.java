@@ -69,6 +69,8 @@ public class ChatLogRepository {
         List<Document> pipeline = new ArrayList<>(stepsFrom(from));
         pipeline.add(new Document("$group", new Document("_id", null)
                 .append("questions", countIf(isStep(ChatLogEntry.CHAT)))
+                .append("unanswered", countIf(new Document("$and", List.of(isStep(ChatLogEntry.CHAT),
+                        new Document("$eq", List.of("$step.outcome", ChatLogEntry.NO_RESULT))))))
                 .append("buttons", countIf(isStep(ChatLogEntry.SHORTCUT)))
                 .append("bookings", countIf(isOk(ChatLogEntry.BOOKING)))
                 .append("bookedRooms", sumIf(isOk(ChatLogEntry.BOOKING),
@@ -82,7 +84,7 @@ public class ChatLogRepository {
         Document d = aggregate(hotelId, pipeline).stream().findFirst().orElse(new Document());
         // $addToSet пази и null (гостите) – той не е потребител
         long users = d.getList("users", Object.class, List.of()).stream().filter(u -> u != null).count();
-        return new ChatReports.Summary(asLong(d, "questions"), asLong(d, "buttons"), asLong(d, "bookings"),
+        return new ChatReports.Summary(asLong(d, "questions"), asLong(d, "unanswered"), asLong(d, "buttons"), asLong(d, "bookings"),
                 asLong(d, "bookedRooms"), asDouble(d, "bookedTotal"), asLong(d, "cancellations"),
                 asDouble(d, "canceledTotal"), users, asLong(d, "steps"), asLong(d, "guestSteps"));
     }
@@ -148,6 +150,25 @@ public class ChatLogRepository {
                 asLong(d, "limitDay"));
     }
 
+    // Последните въпроси в чата с оценките на знанията (най-новият първи), най-много limit
+    public List<ChatReports.ScoredQuestion> recentQuestions(String hotelId, Instant from, int limit) {
+        List<Document> pipeline = new ArrayList<>(stepsFrom(from));
+        pipeline.add(new Document("$match", new Document("step.step", ChatLogEntry.CHAT)
+                .append("step.details.knowledgeScores", new Document("$exists", true))));
+        pipeline.add(new Document("$sort", new Document("step.at", -1)));
+        pipeline.add(new Document("$limit", limit));
+        return aggregate(hotelId, pipeline).stream().map(d -> {
+            Document step = d.get("step", Document.class);
+            Document details = step.get("details", Document.class);
+            List<Double> scores = details.getList("knowledgeScores", Object.class).stream()
+                    .map(s -> s instanceof Number n ? n.doubleValue() : null)
+                    .toList();
+            Date at = step.getDate("at");
+            return new ChatReports.ScoredQuestion(at == null ? null : at.toInstant(), step.getString("userMessage"),
+                    scores, step.getString("outcome"));
+        }).toList();
+    }
+
     // Натиснатите бутони – първо най-натисканите
     public List<ChatReports.ButtonUsage> buttonUsage(String hotelId, Instant from) {
         List<Document> pipeline = new ArrayList<>(stepsFrom(from));
@@ -165,11 +186,11 @@ public class ChatLogRepository {
                 .toList();
     }
 
-    // Записите от from насам като стъпки: { userId, timestamp, step: { step, outcome, errorType, details, gemini, at } }.
+    // Записите от from насам като стъпки: { userId, timestamp, step: { step, outcome, errorType, userMessage, details, gemini, at } }.
     // Отделният запис става една стъпка (type → step), действието – всичките си стъпки.
     private static List<Document> stepsFrom(Instant from) {
         Document single = new Document("step", "$type").append("outcome", "$outcome").append("errorType", "$errorType")
-                .append("details", "$details").append("gemini", "$gemini").append("at", "$timestamp");
+                .append("userMessage", "$userMessage").append("details", "$details").append("gemini", "$gemini").append("at", "$timestamp");
         return List.of(
                 new Document("$match", new Document("timestamp", new Document("$gte", Date.from(from)))),
                 new Document("$project", new Document("userId", 1).append("timestamp", 1)

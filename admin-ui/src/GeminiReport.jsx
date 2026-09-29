@@ -1,5 +1,5 @@
-import { Box, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
-import { count, date } from './reportFormat.js'
+import { Box, Chip, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
+import { count, date, dateTime, score } from './reportFormat.js'
 import { Cards, Section } from './reportParts.jsx'
 
 // Кой вика Gemini – имената на източниците от gemini_usage_<hotelId>
@@ -11,7 +11,8 @@ const SOURCES = {
 }
 
 // Отчетът „Gemini“: заявки и токени за периода, по източник и по дни, колко от действията в чата минават без Gemini
-// и колко пъти хотелът е стигнал лимита си. Без цена – Gemini връща токените, не цената.
+// и колко пъти хотелът е стигнал лимита си, последните въпроси с оценките на знанията.
+// Без цена – Gemini връща токените, не цената.
 export default function GeminiReport({ report }) {
   const { total, bySource, byDay, share } = report
   const tokens = (total.inputTokens ?? 0) + (total.outputTokens ?? 0)
@@ -71,6 +72,7 @@ export default function GeminiReport({ report }) {
           </Box>
         )}
       </Section>
+      <Questions questions={report.questions} />
       <Section title="По дни"
         hint={`Денят е по тихоокеанско време – тогава Gemini нулира дневната квота. Лимит на хотела: ${count(report.limitPerDay)} въпроса на ден и ${count(report.limitPerMinute)} на минута.`}>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -109,5 +111,48 @@ export default function GeminiReport({ report }) {
         )}
       </Section>
     </>
+  )
+}
+
+// Последните въпроси в чата и колко близо са знанията, подадени на Gemini – само за наблюдение, без праг
+function Questions({ questions }) {
+  return (
+    <Section title="Последните въпроси и близостта на знанията"
+      hint="При всеки въпрос Gemini получава 5-те най-близки знания. Оценката (0 до 1) показва колко близо е всяко до въпроса – първата е най-близкото. „Без отговор“ – Gemini е казал, че няма информацията.">
+      {questions.length === 0 ? (
+        <Typography color="text.secondary">Няма въпроси с оценки за периода.</Typography>
+      ) : (
+        <Box sx={{ overflowX: 'auto' }}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Кога</TableCell>
+                <TableCell>Въпрос</TableCell>
+                <TableCell align="right">Най-близко</TableCell>
+                <TableCell>Всички оценки</TableCell>
+                <TableCell>Отговор</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {questions.map((question, index) => (
+                <TableRow key={`${question.at}|${index}`}>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{dateTime(question.at)}</TableCell>
+                  <TableCell sx={{ minWidth: 200 }}>{question.question || '—'}</TableCell>
+                  <TableCell align="right">{score(question.scores[0])}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'text.secondary' }}>
+                    {question.scores.map(score).join(' · ')}
+                  </TableCell>
+                  <TableCell>
+                    {question.outcome === 'no_result'
+                      ? <Chip size="small" color="warning" label="без отговор" />
+                      : <Chip size="small" variant="outlined" label="да" />}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Box>
+      )}
+    </Section>
   )
 }

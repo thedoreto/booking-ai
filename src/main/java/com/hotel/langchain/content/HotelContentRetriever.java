@@ -33,6 +33,10 @@ public class HotelContentRetriever implements ContentRetriever {
             if (documents == null || documents.isEmpty()) {
                 return Collections.emptyList();
             }
+            // Колко близо е всяко знание до въпроса, в реда на търсенето – само за логовете
+            TenantContext.setKnowledgeScores(documents.stream()
+                    .map(doc -> doc.getScore() == null ? null : Math.round(doc.getScore() * 1000) / 1000.0)
+                    .toList());
 
             return documents.stream()
                     .map(doc -> Content.from(doc.getText()))

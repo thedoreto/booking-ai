@@ -28,16 +28,20 @@ public class AdminReportService {
     public static final int MAX_DAYS = 180;
     // Търсенията без свободни стаи – най-много толкова реда
     private static final int NO_ROOMS_LIMIT = 20;
+    // Последните въпроси с оценките на знанията – най-много толкова реда
+    private static final int QUESTIONS_LIMIT = 20;
 
     public record Report(int days, ChatReports.Summary summary, ChatReports.BookingFunnel funnel,
                          List<ChatReports.NoRoomsSearch> noRooms, List<ChatReports.ButtonUsage> buttons) {}
 
     // Отчетът „Gemini“: total – всичко за периода; bySource – по източник и модел; byDay – по дни (най-новият първи,
     // само дните със заявки; денят е по тихоокеанско време, като квотата на Gemini); share – колко от действията в чата
-    // са викали Gemini и колко пъти е стигнат лимитът; limitPerMinute / limitPerDay – лимитът на хотела (GeminiBudget).
+    // са викали Gemini и колко пъти е стигнат лимитът; limitPerMinute / limitPerDay – лимитът на хотела (GeminiBudget);
+    // questions – последните въпроси в чата с оценките на знанията, които RAG е подал на Gemini.
     // Без цена – само заявки и токени (Gemini не връща цена).
     public record GeminiReport(int days, GeminiCount total, List<GeminiCount> bySource, List<GeminiCount> byDay,
-                               ChatReports.GeminiShare share, int limitPerMinute, int limitPerDay) {}
+                               ChatReports.GeminiShare share, int limitPerMinute, int limitPerDay,
+                               List<ChatReports.ScoredQuestion> questions) {}
 
     // Сбор от броячите. key – source (в bySource, с model) или ден (в byDay); null в total.
     // Токените са null, ако няма чат модел; characters – null, ако няма embedding.
@@ -99,7 +103,8 @@ public class AdminReportService {
                 .orElse(new GeminiCount(null, null, 0, 0, null, null, null));
         Instant from = clock.instant().minus(Duration.ofDays(days));
         return new GeminiReport(days, total, bySource, byDay, chatLogRepository.geminiShare(hotelId, from),
-                geminiBudget.perMinute(), geminiBudget.perDay());
+                geminiBudget.perMinute(), geminiBudget.perDay(),
+                chatLogRepository.recentQuestions(hotelId, from, QUESTIONS_LIMIT));
     }
 
     private static void checkPeriod(int days) {

@@ -51,6 +51,7 @@ class ChatLogReportsTest {
         String hotel = hotel();
         repository.insert(hotel, single("chat", "ok", null, Map.of()));
         repository.insert(hotel, single("chat", "rejected", "user-1", Map.of()));
+        repository.insert(hotel, single("chat", "no_result", null, Map.of()));
         repository.insert(hotel, single("shortcut", "ok", null, Map.of("shortcutId", "parking")));
         // Въпрос, който отваря календара, после резервация на 2 стаи
         String flow = UUID.randomUUID().toString();
@@ -75,7 +76,8 @@ class ChatLogReportsTest {
 
         ChatReports.Summary summary = repository.summary(hotel, FROM);
 
-        assertThat(summary.questions()).isEqualTo(3);
+        assertThat(summary.questions()).isEqualTo(4);
+        assertThat(summary.unanswered()).isEqualTo(1);
         assertThat(summary.buttons()).isEqualTo(2);
         assertThat(summary.bookings()).isEqualTo(1);
         assertThat(summary.bookedRooms()).isEqualTo(2);
@@ -83,8 +85,8 @@ class ChatLogReportsTest {
         assertThat(summary.cancellations()).isEqualTo(1);
         assertThat(summary.canceledTotal()).isEqualTo(120.0);
         assertThat(summary.users()).isEqualTo(2);
-        assertThat(summary.steps()).isEqualTo(9);
-        assertThat(summary.guestSteps()).isEqualTo(2);
+        assertThat(summary.steps()).isEqualTo(10);
+        assertThat(summary.guestSteps()).isEqualTo(3);
     }
 
     @Test
@@ -92,7 +94,7 @@ class ChatLogReportsTest {
         String hotel = hotel();
 
         assertThat(repository.summary(hotel, FROM))
-                .isEqualTo(new ChatReports.Summary(0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+                .isEqualTo(new ChatReports.Summary(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         assertThat(repository.bookingFunnel(hotel, FROM))
                 .isEqualTo(new ChatReports.BookingFunnel(0, 0, 0, 0, 0, 0, 0, 0));
         assertThat(repository.noRoomsSearches(hotel, FROM, 20)).isEmpty();
@@ -184,6 +186,30 @@ class ChatLogReportsTest {
 
         assertThat(repository.geminiShare(hotel, FROM)).isEqualTo(new ChatReports.GeminiShare(7, 3, 1, 1));
         assertThat(repository.geminiShare(hotel(), FROM)).isEqualTo(new ChatReports.GeminiShare(0, 0, 0, 0));
+    }
+
+    @Test
+    void recentQuestionsHaveTheScoresNewestFirst() {
+        String hotel = hotel();
+        ChatLog older = single("chat", "no_result", null, Map.of("knowledgeScores", List.of(0.61, 0.6)));
+        older.setUserMessage("Имате ли басейн?");
+        older.setTimestamp(NOW.minus(Duration.ofHours(2)));
+        repository.insert(hotel, older);
+        // Въпрос, който отваря календара – стъпка в действие
+        ChatLog.Step calendar = step("chat", "ok", Map.of("knowledgeScores", List.of(0.7)));
+        calendar.setUserMessage("Искам стая за петък");
+        addSteps(hotel, "new_booking", UUID.randomUUID().toString(), "chat", calendar);
+        // Без оценки (отказан, без RAG) и бутон – не са в списъка
+        repository.insert(hotel, single("chat", "rejected", null, Map.of()));
+        repository.insert(hotel, single("shortcut", "ok", null, Map.of("knowledgeScores", List.of(0.9))));
+
+        List<ChatReports.ScoredQuestion> questions = repository.recentQuestions(hotel, FROM, 20);
+
+        assertThat(questions).extracting(ChatReports.ScoredQuestion::question)
+                .containsExactly("Искам стая за петък", "Имате ли басейн?");
+        assertThat(questions.get(1).scores()).containsExactly(0.61, 0.6);
+        assertThat(questions.get(1).outcome()).isEqualTo("no_result");
+        assertThat(repository.recentQuestions(hotel, FROM, 1)).hasSize(1);
     }
 
     private static ChatLog.Gemini gemini(int calls) {

@@ -106,6 +106,10 @@ public class ChatLogEntry {
         return outcome;
     }
 
+    public Object detail(String key) {
+        return details.get(key);
+    }
+
     String userId() {
         return userId;
     }

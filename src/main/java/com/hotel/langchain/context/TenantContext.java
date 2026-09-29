@@ -2,6 +2,8 @@ package com.hotel.langchain.context;
 
 import com.hotel.langchain.log.ChatLogEntry;
 
+import java.util.List;
+
 public class TenantContext {
     private static final ThreadLocal<String> CURRENT_HOTEL_ID = new ThreadLocal<>();
     // Влезлият потребител (токен от UI); null – гост
@@ -12,6 +14,8 @@ public class TenantContext {
     private static final ThreadLocal<UiAction> UI_ACTION = new ThreadLocal<>();
     // Грешка в tool, който връща само текст на модела (без UiAction) – за логовете (ChatLogEntry.errorType)
     private static final ThreadLocal<String> TOOL_ERROR = new ThreadLocal<>();
+    // Оценките на знанията, които RAG е подал на Gemini (HotelContentRetriever) – за логовете (details.knowledgeScores)
+    private static final ThreadLocal<List<Double>> KNOWLEDGE_SCORES = new ThreadLocal<>();
 
     // outcome/errorType – за логовете (ChatLogEntry): ok, no_result, rejected, error
     public record UiAction(String actionType, String reply, Object data, String outcome, String errorType) {
@@ -64,7 +68,16 @@ public class TenantContext {
         return TOOL_ERROR.get();
     }
 
+    public static void setKnowledgeScores(List<Double> scores) {
+        KNOWLEDGE_SCORES.set(scores);
+    }
+
+    public static List<Double> getKnowledgeScores() {
+        return KNOWLEDGE_SCORES.get();
+    }
+
     public static void clear() {
+        KNOWLEDGE_SCORES.remove();
         UI_ACTION.remove();
         TOOL_ERROR.remove();
         CURRENT_HOTEL_ID.remove();

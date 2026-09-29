@@ -116,7 +116,10 @@ public class KnowledgeRepository {
                         .append("limit", 5)
         );
 
-        Aggregation aggregation = Aggregation.newAggregation(context -> vectorSearch);
+        // Оценката на близостта – за логовете (колко близо е всяко знание до въпроса)
+        Document score = new Document("$addFields", new Document("score", new Document("$meta", "vectorSearchScore")));
+
+        Aggregation aggregation = Aggregation.newAggregation(context -> vectorSearch, context -> score);
 
         return mongoTemplate.aggregate(aggregation, collection(hotelId), KnowledgeDocument.class).getMappedResults();
     }

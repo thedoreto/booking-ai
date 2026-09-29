@@ -1,6 +1,7 @@
 package com.hotel.knowledge.model;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.ReadOnlyProperty;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.util.*;
@@ -23,6 +24,10 @@ public class KnowledgeDocument {
     private Map<String, Object> metadata;
     // Код на език → преводът на text (без езика по подразбиране)
     private Map<String, String> translations;
+    // Колко близо е знанието до въпроса (0..1, $meta vectorSearchScore) – само в резултата от searchByVector,
+    // не се записва в Mongo
+    @ReadOnlyProperty
+    private Double score;
 
     public KnowledgeDocument() {
         // REQUIRED by Spring Data Mongo
@@ -34,6 +39,8 @@ public class KnowledgeDocument {
     public String getTitle() { return title; }
     public List<Double> getEmbedding() { return embedding; }
     public Map<String, Object> getMetadata() { return metadata; }
+    public Double getScore() { return score; }
+    public void setScore(Double score) { this.score = score; }
     public String getCategory() { return category; }
     public List<String> getTags() { return tags; }
     public String getSource() { return source; }

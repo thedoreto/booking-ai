@@ -99,7 +99,7 @@ export default function ReportsPage({ onOpenShortcut, onUnauthorized }) {
 function Summary({ summary }) {
   const guestShare = summary.steps > 0 ? Math.round((summary.guestSteps / summary.steps) * 100) : 0
   const cards = [
-    { label: 'Въпроси в чата', value: count(summary.questions) },
+    { label: 'Въпроси в чата', value: count(summary.questions), note: `без отговор в знанията: ${count(summary.unanswered)}` },
     { label: 'Натиснати бутони', value: count(summary.buttons) },
     {
       label: 'Резервации през чата',
