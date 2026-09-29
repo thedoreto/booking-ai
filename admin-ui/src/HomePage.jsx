@@ -3,8 +3,9 @@ import { AppBar, Box, Button, Container, Tab, Tabs, Toolbar, Typography } from '
 import KnowledgePage from './KnowledgePage.jsx'
 import ShortcutsPage from './ShortcutsPage.jsx'
 import ReportsPage from './ReportsPage.jsx'
+import SuggestionsPage from './SuggestionsPage.jsx'
 
-// Страницата след вход: горна лента и табове. Тук ще влязат отчетите, бутоните и т.н.
+// Страницата след вход: горна лента и табове – знания, бутони, отчети, предложения
 export default function HomePage({ admin, onLogout }) {
   const [tab, setTab] = useState('knowledge')
   // Бутонът, към който се стига от „Ползва се от бутоните“ в таба „Знания“ или от „Отчети“
@@ -39,12 +40,14 @@ export default function HomePage({ admin, onLogout }) {
             <Tab value="knowledge" label="Знания" />
             <Tab value="shortcuts" label="Бутони" />
             <Tab value="reports" label="Отчети" />
+            <Tab value="suggestions" label="Предложения" />
           </Tabs>
         </Container>
       </Box>
       <Container sx={{ py: 3 }}>
         {tab === 'knowledge' && <KnowledgePage onOpenShortcut={openShortcut} onUnauthorized={onLogout} />}
         {tab === 'reports' && <ReportsPage onOpenShortcut={openShortcut} onUnauthorized={onLogout} />}
+        {tab === 'suggestions' && <SuggestionsPage onOpenShortcut={openShortcut} onUnauthorized={onLogout} />}
         {tab === 'shortcuts' && <ShortcutsPage focusShortcutId={focusShortcutId} onUnauthorized={onLogout} />}
       </Container>
     </Box>

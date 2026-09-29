@@ -24,11 +24,12 @@ const ERRORS = {
 
 // Формата за нов бутон (shortcut = null) или за редакция. languages – езиците на хотела, основният е задължителен.
 // Действието: знания (в реда на избор – в този ред излизат в чата) или tool.
+// initial – попълнените полета на новия бутон (от таба „Предложения“: надпис и знания).
 export default function ShortcutEditor({
-  shortcut: existing, languages, defaultLanguage, categories, documents, tools, onSaved, onCancel, onUnauthorized,
+  shortcut: existing, initial, languages, defaultLanguage, categories, documents, tools, onSaved, onCancel, onUnauthorized,
 }) {
   const isNew = !existing
-  const shortcut = existing || {}
+  const shortcut = existing || initial || {}
   const [shortcutId, setShortcutId] = useState(shortcut.shortcutId || '')
   const [label, setLabel] = useState(shortcut.label || {})
   const [category, setCategory] = useState(shortcut.category || '')

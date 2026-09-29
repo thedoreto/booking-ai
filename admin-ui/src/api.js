@@ -148,3 +148,20 @@ export function reports(token, days) {
 export function geminiReport(token, days) {
   return request(`/reports/gemini?days=${encodeURIComponent(days)}`, authorized(token))
 }
+
+// Последният анализ за таб „Предложения“; null – още няма (204)
+export async function suggestions(token) {
+  const analysis = await request('/suggestions', authorized(token))
+  return analysis.id ? analysis : null
+}
+
+// Нов анализ с Gemini за последните days дни (веднъж на час за хотел – TOO_SOON с body.retryAt)
+export function analyzeSuggestions(token, days) {
+  return request('/suggestions/analyze', { ...authorized(token), method: 'POST', body: JSON.stringify({ days }) })
+}
+
+// Предложението е разгледано: status – accepted (създадено) или dismissed (отхвърлено)
+export function setSuggestionStatus(token, analysisId, itemId, status) {
+  return request(`/suggestions/${encodeURIComponent(analysisId)}/items/${encodeURIComponent(itemId)}`,
+    { ...authorized(token), method: 'PUT', body: JSON.stringify({ status }) })
+}

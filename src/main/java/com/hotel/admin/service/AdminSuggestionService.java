@@ -32,12 +32,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 // Таб „Предложения“ в админ панела: анализ на въпросите от чата с Gemini (SuggestionAnalyzer) – само по бутон,
-// най-много веднъж на COOLDOWN за хотел. Предложенията се записват в suggestions_<hotelId>; админът ги одобрява
+// най-много веднъж на COOLDOWN за хотел; след неуспешен опит (напр. Gemini е претоварен) – следващият след RETRY_AFTER_FAILURE. Предложенията се записват в suggestions_<hotelId>; админът ги одобрява
 // (създава знанието/бутона сам) или отхвърля. Нищо не влиза в знанията или бутоните без него.
 @Service
 public class AdminSuggestionService {
 
     public static final Duration COOLDOWN = Duration.ofHours(1);
+    public static final Duration RETRY_AFTER_FAILURE = Duration.ofMinutes(5);
     // Колко различни въпроса най-много отиват към Gemini (токените растат с тях)
     static final int MAX_UNANSWERED = 200;
     static final int MAX_ANSWERED = 300;
@@ -46,7 +47,7 @@ public class AdminSuggestionService {
     // Заглавие на знание без title – началото на текста
     private static final int TITLE_FROM_TEXT = 60;
 
-    // Анализът е пускан преди по-малко от COOLDOWN – следващият е възможен от retryAt
+    // Анализът е пускан скоро (COOLDOWN след успех, RETRY_AFTER_FAILURE след неуспех) – следващият е възможен от retryAt
     public static class TooSoonException extends RuntimeException {
         private final Instant retryAt;
 
@@ -85,8 +86,8 @@ public class AdminSuggestionService {
     private final HotelLanguages hotelLanguages;
     private final SuggestionAnalyzer analyzer;
     private final Clock clock;
-    // Последният опит за хотел (и неуспешният харчи токени) – в паметта; след рестарт важи записаният анализ
-    private final Map<String, Instant> lastAttempts = new ConcurrentHashMap<>();
+    // Последният неуспешен опит за хотел – в паметта (след рестарт се забравя); успешният е записаният анализ
+    private final Map<String, Instant> lastFailures = new ConcurrentHashMap<>();
     private final Set<String> running = ConcurrentHashMap.newKeySet();
 
     @Autowired
@@ -118,7 +119,7 @@ public class AdminSuggestionService {
             throw new InvalidPeriodException();
         }
         Instant now = clock.instant();
-        Instant retryAt = lastAnalysis(hotelId).map(last -> last.plus(COOLDOWN)).orElse(null);
+        Instant retryAt = retryAt(hotelId);
         if (retryAt != null && now.isBefore(retryAt)) {
             throw new TooSoonException(retryAt);
         }
@@ -132,13 +133,19 @@ public class AdminSuggestionService {
             if (unanswered.isEmpty() && answered.isEmpty()) {
                 throw new NoQuestionsException();
             }
-            lastAttempts.put(hotelId, now);
             List<KnowledgeDocument> knowledge = knowledgeService.findAll(hotelId);
             String defaultLanguage = hotelLanguages.of(hotelId).defaultLanguage();
-            SuggestionAnalyzer.Result result = analyzer.analyze(hotelId, new SuggestionAnalyzer.Input(
-                    hotelLanguages.nameOf(hotelId, defaultLanguage), unanswered, answered,
-                    knowledge.stream().map(AdminSuggestionService::knowledgeRef).toList(),
-                    buttons(hotelId, defaultLanguage), handled(hotelId)));
+            SuggestionAnalyzer.Result result;
+            try {
+                result = analyzer.analyze(hotelId, new SuggestionAnalyzer.Input(
+                        hotelLanguages.nameOf(hotelId, defaultLanguage), unanswered, answered,
+                        knowledge.stream().map(AdminSuggestionService::knowledgeRef).toList(),
+                        buttons(hotelId, defaultLanguage), handled(hotelId)));
+            } catch (SuggestionAnalyzer.AnalysisFailedException e) {
+                lastFailures.put(hotelId, now);
+                throw e;
+            }
+            lastFailures.remove(hotelId);
 
             SuggestionAnalysis analysis = new SuggestionAnalysis();
             analysis.setCreatedAt(now);
@@ -168,14 +175,17 @@ public class AdminSuggestionService {
         return suggestionRepository.updateItemStatus(hotelId, analysisId, itemId, status);
     }
 
-    // Кога е бил последният анализ: опитът в паметта или записаният (след рестарт)
-    private Optional<Instant> lastAnalysis(String hotelId) {
-        Instant attempt = lastAttempts.get(hotelId);
-        Instant saved = suggestionRepository.findLatest(hotelId).map(SuggestionAnalysis::getCreatedAt).orElse(null);
-        if (attempt == null || saved == null) {
-            return Optional.ofNullable(attempt == null ? saved : attempt);
+    // От кога може следващ анализ: COOLDOWN след записания анализ, RETRY_AFTER_FAILURE след неуспешен опит – по-късното;
+    // null – веднага
+    private Instant retryAt(String hotelId) {
+        Instant afterSaved = suggestionRepository.findLatest(hotelId)
+                .map(analysis -> analysis.getCreatedAt().plus(COOLDOWN)).orElse(null);
+        Instant failure = lastFailures.get(hotelId);
+        Instant afterFailure = failure == null ? null : failure.plus(RETRY_AFTER_FAILURE);
+        if (afterSaved == null || afterFailure == null) {
+            return afterSaved == null ? afterFailure : afterSaved;
         }
-        return Optional.of(attempt.isAfter(saved) ? attempt : saved);
+        return afterSaved.isAfter(afterFailure) ? afterSaved : afterFailure;
     }
 
     // Предложение от Gemini, което може да се покаже: с тема и чернова / с надпис и поне едно съществуващо знание.

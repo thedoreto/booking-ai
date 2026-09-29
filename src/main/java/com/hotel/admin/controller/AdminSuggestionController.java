@@ -64,7 +64,9 @@ public class AdminSuggestionController {
         } catch (AnalysisRunningException e) {
             return error(HttpStatus.CONFLICT, "ANALYSIS_RUNNING");
         } catch (AnalysisFailedException e) {
-            System.err.println("Suggestions analysis failed for hotelId=" + admin.hotelId() + ": " + e);
+            // Причината (грешката от Gemini) е в cause – без нея в лога остава само „Gemini error“
+            System.err.println("Suggestions analysis failed for hotelId=" + admin.hotelId() + ": " + e.getMessage()
+                    + (e.getCause() != null ? " – " + e.getCause() : ""));
             return error(HttpStatus.SERVICE_UNAVAILABLE, "ANALYSIS_FAILED");
         }
     }

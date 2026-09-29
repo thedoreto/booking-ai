@@ -95,15 +95,23 @@ class AdminSuggestionServiceTest {
     }
 
     @Test
-    void onceAnHourAlsoAfterAFailureOrARestart() {
-        when(analyzer.analyze(eq(HOTEL), any())).thenThrow(new AnalysisFailedException("503", null));
+    void afterAFailureTheNextTryIsInFiveMinutes() {
+        when(analyzer.analyze(eq(HOTEL), any()))
+                .thenThrow(new AnalysisFailedException("503", null))
+                .thenReturn(new SuggestionAnalyzer.Result(List.of(), 1, 1));
         assertThatThrownBy(() -> service.analyze(HOTEL, 30)).isInstanceOf(AnalysisFailedException.class);
 
-        clock.advance(Duration.ofMinutes(59));
+        clock.advance(Duration.ofMinutes(4));
         assertThatThrownBy(() -> service.analyze(HOTEL, 30)).isInstanceOfSatisfying(TooSoonException.class,
-                e -> assertThat(e.getRetryAt()).isEqualTo(NOW.plus(Duration.ofHours(1))));
+                e -> assertThat(e.getRetryAt()).isEqualTo(NOW.plus(Duration.ofMinutes(5))));
 
-        // След рестарт (нова инстанция) важи записаният анализ
+        clock.advance(Duration.ofMinutes(1));
+        assertThat(service.analyze(HOTEL, 30).getItems()).isEmpty();
+    }
+
+    @Test
+    void afterASavedAnalysisTheNextIsInAnHourAlsoAfterARestart() {
+        // Записаният анализ важи и за нова инстанция (след рестарт)
         SuggestionAnalysis saved = new SuggestionAnalysis();
         saved.setCreatedAt(clock.instant().minus(Duration.ofMinutes(10)));
         when(suggestionRepository.findLatest(HOTEL)).thenReturn(Optional.of(saved));

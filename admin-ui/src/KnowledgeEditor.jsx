@@ -3,6 +3,7 @@ import { Alert, Autocomplete, Box, Button, TextField, Typography } from '@mui/ma
 import { createKnowledge, getToken, updateKnowledge } from './api.js'
 
 const MAX_TEXT_LENGTH = 10000
+const PLACEHOLDER = /\[[^\]\n]{1,40}\]/g
 
 const ERRORS = {
   TEXT_REQUIRED: 'Текстът е задължителен.',
@@ -13,10 +14,10 @@ const ERRORS = {
 }
 
 // Формата за ново знание (doc = null) или за редакция. Embedding-ът се прави в booking-ai: за новото – винаги,
-// при редакция – само ако текстът е променен.
-export default function KnowledgeEditor({ doc: existing, categories, allTags, onSaved, onCancel, onUnauthorized }) {
+// при редакция – само ако текстът е променен. initial – попълнените полета на новото знание (от таба „Предложения“).
+export default function KnowledgeEditor({ doc: existing, initial, categories, allTags, onSaved, onCancel, onUnauthorized }) {
   const isNew = !existing
-  const doc = existing || {}
+  const doc = existing || initial || {}
   const [title, setTitle] = useState(doc.title || '')
   const [category, setCategory] = useState(doc.category || '')
   const [tags, setTags] = useState(doc.tags || [])
@@ -26,6 +27,8 @@ export default function KnowledgeEditor({ doc: existing, categories, allTags, on
   const [saving, setSaving] = useState(false)
 
   const textChanged = !isNew && text.trim() !== (doc.text || '').trim()
+  // Черновата от „Предложения“ има празни места [час], [цена]… вместо фактите, които Gemini не знае
+  const unfilled = initial ? text.match(PLACEHOLDER) : null
 
   async function handleSubmit(event) {
     event.preventDefault()
@@ -85,6 +88,11 @@ export default function KnowledgeEditor({ doc: existing, categories, allTags, on
         error={text.length > MAX_TEXT_LENGTH}
         helperText={`${text.length.toLocaleString('bg-BG')} / ${MAX_TEXT_LENGTH.toLocaleString('bg-BG')} знака`}
       />
+      {unfilled && (
+        <Alert severity="warning">
+          Непопълнени места: {[...new Set(unfilled)].join(', ')}. Заменете ги с фактите за хотела преди запис.
+        </Alert>
+      )}
       {error && <Alert severity="error">{error}</Alert>}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
         <Button type="submit" variant="contained" disabled={saving}>
