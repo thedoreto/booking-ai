@@ -17,6 +17,69 @@
 - В „Знания“ бутоните в „Ползва се от…“ са връзки – отварят таба „Бутони“ и превъртат до бутона.
 - Проверено: `npm run lint`, `vite build`, unit тестовете на booking-ai без облак (244).
 
+### Преместени бележки (`55cf9d7`)
+- Всички `.md` освен `CLAUDE.md` са в `md/`; кодът на бутоните – `d80985e`.
+
+### Конфигурируеми инструменти – само план
+- Решено: само вкл./изкл. на tool за хотела, от админа на хотела. Планът в 3 стъпки е в `PLAN.md`; не е започнат.
+
+### Отчети в админ панела – 1–4 (`5048b29`)
+- `ChatLogRepository`: `summary`, `bookingFunnel`, `noRoomsSearches`, `buttonUsage` – агрегации в Mongo; всички записи от периода се разгъват на стъпки (отделният запис = една стъпка), затова въпрос/бутон, който отваря календара, пак се брои. Records – `log/ChatReports`.
+- `AdminReportService` / `AdminReportController`: `GET /api/admin/reports?days=30` (1–180, `400 INVALID_PERIOD`).
+- admin-ui: таб „Отчети“ (`ReportsPage.jsx`) – период 7/30/90/180, карти, пътят до резервация с проценти, таблици за търсенията без стаи и бутоните (връзки към „Бутони“). Сумите – без валута.
+- Тестове: нова тестова зависимост `de.flapdoodle.embed.mongo` 4.33.0 (вградена MongoDB 7.0, работи и на Ubuntu 26.04); `ChatLogReportsTest` (5) пуска агрегациите срещу истинска база, записите – през `insert`/`addFlowStep`. `AdminReportServiceTest` (2). Всички тестове без облак – 252, lint и build на admin-ui минават.
+
+### Gemini в админа – решения (`GEMINI_REPORTS_PLAN.md`)
+- **Без цена** – само заявки и токени: Gemini връща токените, не цената, а цените на Google се сменят. Токените се виждат и в админа на хотела (основа за по-скъп абонамент; повод за бутони вместо въпроси към Gemini).
+- Броячи **на ден** (не запис на заявка); embedding-ът не връща токени – брои се дължината в знаци.
+
+### Стъпка 1: броячи на Gemini (не е комитнато)
+- Нова колекция `gemini_usage_<hotelId>` – модел `GeminiUsage`, `GeminiUsageRepository` (`add` – upsert с `$inc`, `findFrom`); един документ за ден (тихоокеанско време, `GeminiBudget.QUOTA_ZONE`), `source` и `model`: `calls`, `errors`, `inputTokens`/`outputTokens` (чат модела) или `characters` (embedding), `updatedAt`. TTL 180 дни по `updatedAt`, уникален индекс `day_source_model`.
+- Източници: `chat` (контролерът, от `GeminiUsageTracker` – вече знае името на модела), `chat_embedding` (RAG), `admin_embedding` (ново знание / променен текст), `admin_translation` (`KnowledgeTranslator` – вече вика `chat(ChatRequest)`, за да получи токените; `translate` получава `hotelId`). Записът – `ChatLogService.geminiUsage`, в същата нишка `chat-log-writer`. `AiConfig.EMBEDDING_MODEL`.
+- Нито едно ново извикване към Gemini; нищо ново в properties/Render. Повторните опити при 503 в превода се броят като едно извикване.
+- Тестове: `GeminiUsageRepositoryTest` (3, вградена MongoDB), нови в `ChatLogServiceTest` (2) и `KnowledgeTranslatorTest` (1), проверки в `KnowledgeServiceTest` и `GeminiUsageTrackerTest`. Всички без облак – 257.
+
+### Стъпка 2: „Отчети → Gemini“ (не е комитнато)
+- `GET /api/admin/reports/gemini?days=30` (`AdminReportController` → `AdminReportService.geminiReport`): `total`, `bySource` (по източник и модел, в реда chat → chat_embedding → admin_embedding → admin_translation), `byDay` (най-новият първи, само дните със заявки), `share`, `limitPerMinute`/`limitPerDay` (`GeminiBudget.perMinute()/perDay()`). Сборовете от `gemini_usage_<hotelId>` – в Java (най-много няколкостотин документа); периодът – последните `days` дни заедно с днешния, по тихоокеанско време.
+- `ChatLogRepository.geminiShare` → `ChatReports.GeminiShare(steps, withGemini, limitMinute, limitDay)`; `stepsFrom` вече носи `errorType` и `gemini` и за отделните записи.
+- admin-ui: в „Отчети“ – под-табове „Чат“ и „Gemini“ с общ период; `GeminiReport.jsx` (карти: заявки/грешки, токени вход/изход, знаци за embedding, % действия без Gemini; таблици по източник и по дни; колко пъти е стигнат лимитът); общото – `reportParts.jsx` (`Cards`, `Section`) и `reportFormat.js` (`count`, `date`).
+- Тестове: 2 нови в `AdminReportServiceTest`, 1 в `ChatLogReportsTest`. Всички без облак – 260; lint и build на admin-ui минават.
+- Стъпки 1–2 – commit `d4e682e` (само кодът).
+
+### Стъпка 3: „без отговор“ – Б (не е комитнато)
+- `Assistant`: един ред в промпта – без информация Gemini започва с `[[NO_INFO]]` (`Assistant.NO_INFO_MARKER`). Контролерът го маха от отговора (където и да е) и, ако няма грешка в tool, записва въпроса с `outcome: no_result`. Без ново извикване към Gemini. Маркерът остава в паметта на разговора (LangChain4j я записва преди контролера).
+- `ChatReports.Summary.unanswered` (въпроси `chat` с `no_result`); в „Чат“ – бележка на картата „Въпроси в чата“. `stepsFrom` носи и `userMessage` за отделните записи.
+- Тестове: маркерът се маха и записът е `no_result`; без маркер – `ok`; промптът съдържа същия маркер; `unanswered` и `recentQuestions` в `ChatLogReportsTest`. Всички без облак – 266; lint и build на admin-ui минават.
+
+### Пазарна оценка – `MARKET_TEST.md`
+- По кода и плановете, без пускане на приложението (вариант „б“), + търсене на конкуренти и цени. Оценка 3/10 за първи платени клиенти (демо 7/10). Главното: резервацията работи само с нашия booking-system и вход за гости; всеки хотел е ръчна настройка; тайните в git и общ Kafka сертификат; Kafka ~$200/мес. е най-големият разход; цените в лева в еврозоната. Първо: евро, „заявка за резервация“ без интеграция, сигурност, уиджет, ескалация.
+
+### Стъпка 4а – commit `d698bf6`
+
+### Стъпка 4б: таб „Предложения“ в admin-ui (не е комитнато)
+- `SuggestionsPage.jsx`: период 7/30/90/180 и „Анализирай“ (при `TOO_SOON` – кога е следващият), ред с последния анализ; картички „Липсващо знание“ (въпросите, черновата) и „Нов бутон“ (въпросите, знанието); „Създай“ – на място `KnowledgeEditor`/`ShortcutEditor` с нов параметър `initial` (попълнени полета за нов запис), след запис – `accepted`; „Отхвърли“ – `dismissed`; разгледаните – под „Покажи разгледаните“.
+- `KnowledgeEditor` предупреждава, докато в текста на черновата има `[..]`. `api.js`: `suggestions`, `analyzeSuggestions`, `setSuggestionStatus`. Нов таб в `HomePage`.
+- Проверено: `npm run lint`, `vite build`.
+- Първият локален опит: Gemini 503 и при трите опита → `ANALYSIS_FAILED`, а правилото „и след неуспех – час“ спираше нов опит. Сменено: след неуспех – 5 мин. (`RETRY_AFTER_FAILURE`), часът – само след записан анализ. Логът вече показва и причината (cause) на грешката.
+
+### Стъпка 3 – commit `d56d0d8` (заедно с оценките на знанията)
+
+### Стъпка 4а: „Предложения“ – backend (не е комитнато)
+- Решено: черновата – с празни места `[..]`; анализ – веднъж на час за хотел; „допълни знание“ – по-късно.
+- `SuggestionAnalyzer` – едно извикване (JSON, отделен модел като `KnowledgeTranslator`, токени – `admin_analysis`): въпроси без отговор → липсващи знания; чести въпроси с отговор → бутони към съществуващи знания.
+- `AdminSuggestionService` – събира въпросите (`ChatLogRepository.questionCounts`, еднаквите слети; `$toLower` в Mongo е само за латиница – сливането е в Java), знанията, бутоните и разгледаните предложения; проверява резултата (непознатите id на знания се махат); веднъж на час (опитът в RAM + записаният анализ); без въпроси – без Gemini.
+- `AdminSuggestionController` – `GET /api/admin/suggestions`, `POST /analyze`, `PUT /{analysisId}/items/{itemId}`. Модел `SuggestionAnalysis` + `SuggestionRepository` (`suggestions_<hotelId>`, TTL 180 дни).
+- Тестове: `SuggestionAnalyzerTest` (3), `AdminSuggestionServiceTest` (4), `SuggestionRepositoryTest` (2, вградена MongoDB), `questionCounts` в `ChatLogReportsTest`. Всички без облак – 276.
+
+### Стъпка 3 – обсъждане: RAG винаги връща 5 знания
+- `searchByVector` е без праг (`limit: 5`) – „RAG не намери знание“ не се случва. Две възможности за „без отговор“: А) праг по оценката на близостта; Б) Gemini започва отговора с маркер `[[NO_INFO]]`, контролерът го маха и записва `no_result` (без ново извикване). Б – още не е решено.
+
+### Оценките на знанията в логовете (не е комитнато)
+- Само измерване, без промяна в чата: `KnowledgeRepository.searchByVector` добавя `score` (`$meta vectorSearchScore`) към всяко знание (`KnowledgeDocument.score`, `@ReadOnlyProperty`); `HotelContentRetriever` ги пази в `TenantContext.knowledgeScores` (3 знака); контролерът ги записва в `details.knowledgeScores` на въпроса в `logs_<hotelId>`, в реда на търсенето.
+- Цел: от реалните числа да се види праг, под който знанието не помага, и да не се праща на Gemini (по-малко входни токени).
+- Таблица в „Отчети → Gemini“: последните 20 въпроса (`ChatLogRepository.recentQuestions` → `ChatReports.ScoredQuestion`) – кога, въпрос, най-близкото знание, всички оценки, отговор/„без отговор“.
+- `$vectorSearch` не работи във вградената MongoDB – самата заявка към Atlas не е покрита с тест; тестовете са за retriever-а (закръгляне) и контролера (записът). `ChatLogEntry.detail(key)`. Всички без облак – 262.
+
 ## Сесия 2026-09-28 (2) – commit на топиците, план за сигурността, вход в админ панела
 
 ### Commit-и на топиците и бележките
