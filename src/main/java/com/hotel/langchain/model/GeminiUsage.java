@@ -24,6 +24,8 @@ public class GeminiUsage {
     public static final String ADMIN_EMBEDDING = "admin_embedding";
     // Превод на знание в админ панела (KnowledgeTranslator)
     public static final String ADMIN_TRANSLATION = "admin_translation";
+    // Анализ на въпросите за таб „Предложения“ в админ панела (SuggestionAnalyzer)
+    public static final String ADMIN_ANALYSIS = "admin_analysis";
 
     @Id
     private String id;

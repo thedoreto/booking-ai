@@ -33,6 +33,10 @@ public final class ChatReports {
     // outcome – no_result, ако Gemini няма отговора в знанията
     public record ScoredQuestion(Instant at, String question, List<Double> scores, String outcome) {}
 
+    // Еднакви въпроси в чата (без значение от главни/малки букви и интервалите около тях) – за анализа „Предложения“;
+    // question – последният зададен вариант
+    public record QuestionCount(String question, long count) {}
+
     // Натиснат бутон: label – последният записан надпис (на езика по подразбиране на хотела)
     public record ButtonUsage(String shortcutId, String label, long count, long noResult) {}
 }

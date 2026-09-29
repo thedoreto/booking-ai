@@ -212,6 +212,34 @@ class ChatLogReportsTest {
         assertThat(repository.recentQuestions(hotel, FROM, 1)).hasSize(1);
     }
 
+    @Test
+    void questionCountsGroupTheSameQuestionAndFilterByOutcome() {
+        String hotel = hotel();
+        ChatLog older = single("chat", "no_result", null, Map.of());
+        older.setUserMessage("имате ли басейн?");
+        older.setTimestamp(NOW.minus(Duration.ofHours(3)));
+        repository.insert(hotel, older);
+        ChatLog newer = single("chat", "no_result", null, Map.of());
+        newer.setUserMessage(" Имате ли басейн? ");
+        repository.insert(hotel, newer);
+        ChatLog spa = single("chat", "no_result", null, Map.of());
+        spa.setUserMessage("Има ли спа?");
+        repository.insert(hotel, spa);
+        ChatLog answered = single("chat", "ok", null, Map.of());
+        answered.setUserMessage("Има ли паркинг?");
+        repository.insert(hotel, answered);
+        // Бутон и въпрос без текст не се броят
+        repository.insert(hotel, single("shortcut", "no_result", null, Map.of()));
+        repository.insert(hotel, single("chat", "no_result", null, Map.of()));
+
+        assertThat(repository.questionCounts(hotel, FROM, "no_result", 10)).containsExactly(
+                new ChatReports.QuestionCount("Имате ли басейн?", 2),
+                new ChatReports.QuestionCount("Има ли спа?", 1));
+        assertThat(repository.questionCounts(hotel, FROM, "ok", 10))
+                .containsExactly(new ChatReports.QuestionCount("Има ли паркинг?", 1));
+        assertThat(repository.questionCounts(hotel, FROM, "no_result", 1)).hasSize(1);
+    }
+
     private static ChatLog.Gemini gemini(int calls) {
         ChatLog.Gemini gemini = new ChatLog.Gemini();
         gemini.setCalls(calls);

@@ -16,7 +16,11 @@ import org.springframework.stereotype.Repository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Date;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -167,6 +171,42 @@ public class ChatLogRepository {
             return new ChatReports.ScoredQuestion(at == null ? null : at.toInstant(), step.getString("userMessage"),
                     scores, step.getString("outcome"));
         }).toList();
+    }
+
+    // Въпросите в чата с даден outcome, еднаквите заедно – първо най-честите, после най-скорошните, най-много limit.
+    // Mongo групира по текста без интервалите около него; главните/малките букви се сливат в Java ($toLower в Mongo
+    // е само за латиница).
+    public List<ChatReports.QuestionCount> questionCounts(String hotelId, Instant from, String outcome, int limit) {
+        List<Document> pipeline = new ArrayList<>(stepsFrom(from));
+        pipeline.add(new Document("$match", new Document("step.step", ChatLogEntry.CHAT)
+                .append("step.outcome", outcome)
+                .append("step.userMessage", new Document("$type", "string"))));
+        pipeline.add(new Document("$group", new Document("_id", new Document("$trim", new Document("input", "$step.userMessage")))
+                .append("count", new Document("$sum", 1))
+                .append("last", new Document("$max", "$step.at"))));
+        // Ключ без главни букви → текстът от най-новия запис, общият брой и последният път
+        Map<String, AskedQuestion> merged = new LinkedHashMap<>();
+        for (Document d : aggregate(hotelId, pipeline)) {
+            String question = d.getString("_id");
+            if (question != null && !question.isEmpty()) {
+                merged.merge(question.toLowerCase(Locale.ROOT),
+                        new AskedQuestion(question, asLong(d, "count"), d.getDate("last")), AskedQuestion::plus);
+            }
+        }
+        return merged.values().stream()
+                .sorted(Comparator.comparingLong(AskedQuestion::count).reversed()
+                        .thenComparing(AskedQuestion::last, Comparator.nullsLast(Comparator.reverseOrder())))
+                .limit(limit)
+                .map(q -> new ChatReports.QuestionCount(q.question(), q.count()))
+                .toList();
+    }
+
+    private record AskedQuestion(String question, long count, Date last) {
+        AskedQuestion plus(AskedQuestion other) {
+            boolean otherIsNewer = other.last != null && (last == null || other.last.after(last));
+            return new AskedQuestion(otherIsNewer ? other.question : question, count + other.count,
+                    otherIsNewer ? other.last : last);
+        }
     }
 
     // Натиснатите бутони – първо най-натисканите

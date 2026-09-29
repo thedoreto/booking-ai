@@ -50,7 +50,7 @@ public class AdminReportService {
 
     // Редът на източниците в таблицата
     private static final List<String> SOURCE_ORDER = List.of(GeminiUsage.CHAT, GeminiUsage.CHAT_EMBEDDING,
-            GeminiUsage.ADMIN_EMBEDDING, GeminiUsage.ADMIN_TRANSLATION);
+            GeminiUsage.ADMIN_EMBEDDING, GeminiUsage.ADMIN_TRANSLATION, GeminiUsage.ADMIN_ANALYSIS);
 
     public static class InvalidPeriodException extends RuntimeException {
         public InvalidPeriodException() {
