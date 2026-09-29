@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { AppBar, Box, Button, Container, Tab, Tabs, Toolbar, Typography } from '@mui/material'
 import KnowledgePage from './KnowledgePage.jsx'
 import ShortcutsPage from './ShortcutsPage.jsx'
+import ReportsPage from './ReportsPage.jsx'
 
 // Страницата след вход: горна лента и табове. Тук ще влязат отчетите, бутоните и т.н.
 export default function HomePage({ admin, onLogout }) {
   const [tab, setTab] = useState('knowledge')
-  // Бутонът, към който се стига от „Ползва се от бутоните“ в таба „Знания“
+  // Бутонът, към който се стига от „Ползва се от бутоните“ в таба „Знания“ или от „Отчети“
   const [focusShortcutId, setFocusShortcutId] = useState(null)
 
   function openShortcut(shortcutId) {
@@ -37,11 +38,13 @@ export default function HomePage({ admin, onLogout }) {
           }}>
             <Tab value="knowledge" label="Знания" />
             <Tab value="shortcuts" label="Бутони" />
+            <Tab value="reports" label="Отчети" />
           </Tabs>
         </Container>
       </Box>
       <Container sx={{ py: 3 }}>
         {tab === 'knowledge' && <KnowledgePage onOpenShortcut={openShortcut} onUnauthorized={onLogout} />}
+        {tab === 'reports' && <ReportsPage onOpenShortcut={openShortcut} onUnauthorized={onLogout} />}
         {tab === 'shortcuts' && <ShortcutsPage focusShortcutId={focusShortcutId} onUnauthorized={onLogout} />}
       </Container>
     </Box>

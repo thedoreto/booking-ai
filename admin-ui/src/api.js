@@ -138,3 +138,8 @@ export function deleteShortcut(token, shortcutId) {
 export function reorderShortcuts(token, shortcutIds) {
   return request('/shortcuts/order', { ...authorized(token), method: 'PUT', body: JSON.stringify({ shortcutIds }) })
 }
+
+// Отчетите за последните days дни (1..180): { days, summary, funnel, noRooms, buttons }
+export function reports(token, days) {
+  return request(`/reports?days=${encodeURIComponent(days)}`, authorized(token))
+}
