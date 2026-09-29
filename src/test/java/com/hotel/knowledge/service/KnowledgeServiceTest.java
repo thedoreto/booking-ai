@@ -2,6 +2,8 @@ package com.hotel.knowledge.service;
 
 import com.hotel.knowledge.model.KnowledgeDocument;
 import com.hotel.knowledge.repository.KnowledgeRepository;
+import com.hotel.langchain.log.ChatLogService;
+import com.hotel.langchain.model.GeminiUsage;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.output.Response;
@@ -33,7 +35,8 @@ class KnowledgeServiceTest {
 
     private final KnowledgeRepository repository = mock(KnowledgeRepository.class);
     private final EmbeddingModel embeddingModel = mock(EmbeddingModel.class);
-    private final KnowledgeService service = new KnowledgeService(repository, embeddingModel);
+    private final ChatLogService chatLogService = mock(ChatLogService.class);
+    private final KnowledgeService service = new KnowledgeService(repository, embeddingModel, chatLogService);
 
     @Test
     void buttonGetsTheTextsInTheOrderOfTheRepositoryWithoutEmptyOnes() {
@@ -62,6 +65,15 @@ class KnowledgeServiceTest {
         when(repository.searchByVector("seven_stars", List.of(0.5, -1.0))).thenReturn(found);
 
         assertThat(service.findRelevant("seven_stars", "Има ли паркинг?")).isSameAs(found);
+
+        // Embedding-ът на въпроса се брои като chat_embedding – без токени, с дължината на въпроса
+        GeminiUsage usage = countedUsage();
+        assertThat(usage.getSource()).isEqualTo(GeminiUsage.CHAT_EMBEDDING);
+        assertThat(usage.getModel()).isEqualTo("gemini-embedding-001");
+        assertThat(usage.getCalls()).isEqualTo(1);
+        assertThat(usage.getErrors()).isZero();
+        assertThat(usage.getCharacters()).isEqualTo("Има ли паркинг?".length());
+        assertThat(usage.getInputTokens()).isNull();
     }
 
     @Test
@@ -98,6 +110,18 @@ class KnowledgeServiceTest {
         assertThatThrownBy(() -> service.update("seven_stars", id.toHexString(), new KnowledgeChanges(null, null, null, null, "Нов текст")))
                 .isInstanceOf(EmbeddingFailedException.class);
         verify(repository, never()).update(anyString(), any(), any(), any());
+
+        // Неуспешното извикване пак се брои – като грешка на админ панела
+        GeminiUsage usage = countedUsage();
+        assertThat(usage.getSource()).isEqualTo(GeminiUsage.ADMIN_EMBEDDING);
+        assertThat(usage.getErrors()).isEqualTo(1);
+        assertThat(usage.getCharacters()).isZero();
+    }
+
+    private GeminiUsage countedUsage() {
+        ArgumentCaptor<GeminiUsage> usage = ArgumentCaptor.forClass(GeminiUsage.class);
+        verify(chatLogService).geminiUsage(eq("seven_stars"), usage.capture());
+        return usage.getValue();
     }
 
     @Test

@@ -24,6 +24,10 @@ public final class ChatReports {
     // Търсене без свободни стаи – еднакви дати и тип стая заедно; roomType null – всички типове
     public record NoRoomsSearch(String startDate, String endDate, String roomType, long count) {}
 
+    // Gemini в чата: steps – всички стъпки, withGemini – тези, за които е викан Gemini (gemini.calls > 0);
+    // limitMinute / limitDay – колко пъти хотелът е стигнал лимита си (в логовете е само първият отказ в минутата/деня)
+    public record GeminiShare(long steps, long withGemini, long limitMinute, long limitDay) {}
+
     // Натиснат бутон: label – последният записан надпис (на езика по подразбиране на хотела)
     public record ButtonUsage(String shortcutId, String label, long count, long noResult) {}
 }

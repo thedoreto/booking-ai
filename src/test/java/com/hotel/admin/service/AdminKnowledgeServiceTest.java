@@ -100,7 +100,7 @@ class AdminKnowledgeServiceTest {
     @Test
     void suggestionIsForOneLanguageAndIsNotSaved() {
         when(knowledgeService.findById("40_robbers", PARKING.toHexString())).thenReturn(Optional.of(doc(PARKING)));
-        when(translator.translate("Текст", "English", List.of(DE))).thenReturn(Map.of("de", "Text auf Deutsch"));
+        when(translator.translate("40_robbers", "Текст", "English", List.of(DE))).thenReturn(Map.of("de", "Text auf Deutsch"));
 
         assertThat(service.suggestTranslation("40_robbers", PARKING.toHexString(), "de")).contains("Text auf Deutsch");
         verify(knowledgeService, never()).setTranslations(anyString(), anyString(), anyMap());
@@ -114,7 +114,7 @@ class AdminKnowledgeServiceTest {
             assertThatThrownBy(() -> service.suggestTranslation("40_robbers", PARKING.toHexString(), language))
                     .isInstanceOf(InvalidKnowledgeException.class);
         }
-        verify(translator, never()).translate(anyString(), anyString(), any());
+        verify(translator, never()).translate(anyString(), anyString(), anyString(), any());
         verify(knowledgeService, never()).setTranslations(anyString(), anyString(), anyMap());
     }
 
@@ -130,7 +130,7 @@ class AdminKnowledgeServiceTest {
     void translateAllUsesEveryLanguageExceptTheDefaultOneAndSavesThem() {
         when(knowledgeService.findById("40_robbers", PARKING.toHexString())).thenReturn(Optional.of(doc(PARKING)));
         Map<String, String> translations = Map.of("bg", "Текст", "de", "Text");
-        when(translator.translate("Текст", "English", List.of(BG, DE))).thenReturn(translations);
+        when(translator.translate("40_robbers", "Текст", "English", List.of(BG, DE))).thenReturn(translations);
         when(knowledgeService.setTranslations("40_robbers", PARKING.toHexString(), translations)).thenReturn(Optional.of(doc(PARKING)));
 
         assertThat(service.translateAll("40_robbers", PARKING.toHexString())).isPresent();
@@ -145,7 +145,7 @@ class AdminKnowledgeServiceTest {
 
         when(knowledgeService.findById(eq("40_robbers"), anyString())).thenReturn(Optional.empty());
         assertThat(service.translateAll("40_robbers", UNUSED.toHexString())).isEmpty();
-        verify(translator, never()).translate(anyString(), anyString(), any());
+        verify(translator, never()).translate(anyString(), anyString(), anyString(), any());
     }
 
     private static Shortcut shortcut(String shortcutId, Map<String, String> label, ObjectId... knowledgeIds) {

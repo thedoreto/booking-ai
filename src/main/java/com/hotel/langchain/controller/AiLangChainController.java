@@ -12,6 +12,7 @@ import com.hotel.langchain.log.ChatFlow;
 import com.hotel.langchain.log.ChatLogEntry;
 import com.hotel.langchain.log.ChatLogService;
 import com.hotel.langchain.log.GeminiUsageTracker;
+import com.hotel.langchain.model.GeminiUsage;
 import com.hotel.langchain.model.Shortcut;
 import com.hotel.langchain.service.ChatHistoryService;
 import com.hotel.langchain.service.GeminiBudget;
@@ -222,6 +223,10 @@ public class AiLangChainController {
 
         GeminiUsageTracker.Usage usage = GeminiUsageTracker.current();
         GeminiUsageTracker.clear();
+        if (usage != null) {
+            chatLogService.geminiUsage(hotelId, GeminiUsage.tokens(GeminiUsage.CHAT, usage.model(),
+                    usage.calls(), usage.errors(), usage.inputTokens(), usage.outputTokens()));
+        }
         logEntry.reply(response.reply()).gemini(usage);
         return logOrStartFlow(hotelId, request.flowId(), ChatFlow.STARTED_BY_CHAT, logEntry, response);
     }

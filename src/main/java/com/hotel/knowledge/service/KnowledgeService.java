@@ -2,6 +2,9 @@ package com.hotel.knowledge.service;
 
 import com.hotel.knowledge.model.KnowledgeDocument;
 import com.hotel.knowledge.repository.KnowledgeRepository;
+import com.hotel.langchain.config.AiConfig;
+import com.hotel.langchain.log.ChatLogService;
+import com.hotel.langchain.model.GeminiUsage;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import org.bson.types.ObjectId;
 import org.springframework.stereotype.Service;
@@ -43,11 +46,14 @@ public class KnowledgeService {
 
     private final KnowledgeRepository knowledgeRepo;
     private final EmbeddingModel embeddingModel;
+    private final ChatLogService chatLogService;
 
     public KnowledgeService(KnowledgeRepository knowledgeRepo,
-                            EmbeddingModel embeddingModel) {
+                            EmbeddingModel embeddingModel,
+                            ChatLogService chatLogService) {
         this.knowledgeRepo = knowledgeRepo;
         this.embeddingModel = embeddingModel;
+        this.chatLogService = chatLogService;
     }
 
     // Бутон със знание: текстовете на избраните документи от knowledge_<hotelId>, в реда на ids –
@@ -175,7 +181,7 @@ public class KnowledgeService {
 
     private List<Double> embedOrFail(String hotelId, String text) {
         try {
-            return embed(text);
+            return embed(hotelId, GeminiUsage.ADMIN_EMBEDDING, text);
         } catch (RuntimeException e) {
             System.err.println("Embedding failed for hotelId=" + hotelId + ": " + e);
             throw new EmbeddingFailedException(e);
@@ -185,7 +191,7 @@ public class KnowledgeService {
     // RAG: най-близките по смисъл знания на хотела до въпроса (vector search в knowledge_<hotelId>)
     public List<KnowledgeDocument> findRelevant(String hotelId, String question) {
      //   testKnowledge();
-        var result = knowledgeRepo.searchByVector(hotelId, embed(question));
+        var result = knowledgeRepo.searchByVector(hotelId, embed(hotelId, GeminiUsage.CHAT_EMBEDDING, question));
 
         System.out.println("Question: " + question);
         System.out.println("Hotel: " + hotelId);
@@ -194,11 +200,20 @@ public class KnowledgeService {
         return result;
     }
 
-    // Векторът на текста (gemini-embedding-001) – с него са и знанията, и въпросите
-    private List<Double> embed(String text) {
-        return embeddingModel.embed(text).content().vectorAsList().stream()
-                .map(Float::doubleValue)
-                .toList();
+    // Векторът на текста (gemini-embedding-001) – с него са и знанията, и въпросите.
+    // Всяко извикване се брои в gemini_usage_<hotelId> по source; Gemini не връща токени при embedding – брои се дължината.
+    private List<Double> embed(String hotelId, String source, String text) {
+        List<Double> vector;
+        try {
+            vector = embeddingModel.embed(text).content().vectorAsList().stream()
+                    .map(Float::doubleValue)
+                    .toList();
+        } catch (RuntimeException e) {
+            chatLogService.geminiUsage(hotelId, GeminiUsage.characters(source, AiConfig.EMBEDDING_MODEL, 1, 1, 0));
+            throw e;
+        }
+        chatLogService.geminiUsage(hotelId, GeminiUsage.characters(source, AiConfig.EMBEDDING_MODEL, 1, 0, text.length()));
+        return vector;
     }
 
     private static String trimToNull(String s) {

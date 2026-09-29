@@ -158,6 +158,43 @@ class ChatLogReportsTest {
                 new ChatReports.ButtonUsage("wifi", "Wi-Fi", 1, 0));
     }
 
+    @Test
+    void geminiShareCountsStepsWithGeminiCallsAndHotelLimits() {
+        String hotel = hotel();
+        // Въпрос с Gemini, бутон без Gemini, въпрос, при който Gemini е върнал само грешка
+        ChatLog question = single("chat", "ok", null, Map.of());
+        question.setGemini(gemini(2));
+        repository.insert(hotel, question);
+        repository.insert(hotel, single("shortcut", "ok", null, Map.of()));
+        ChatLog failed = single("chat", "error", null, Map.of());
+        failed.setErrorType("GEMINI_OVERLOADED_503");
+        failed.setGemini(gemini(1));
+        repository.insert(hotel, failed);
+        // Откази заради лимита на хотела – без Gemini
+        ChatLog minute = single("chat", "rejected", null, Map.of());
+        minute.setErrorType("HOTEL_LIMIT_MINUTE");
+        repository.insert(hotel, minute);
+        ChatLog day = single("chat", "rejected", null, Map.of());
+        day.setErrorType("HOTEL_LIMIT_DAY");
+        repository.insert(hotel, day);
+        // Въпрос, който отваря календара (с Gemini), после търсене без Gemini
+        ChatLog.Step calendar = step("chat", "ok", Map.of());
+        calendar.setGemini(gemini(1));
+        addSteps(hotel, "new_booking", UUID.randomUUID().toString(), "chat", calendar, step("search", "ok", Map.of()));
+
+        assertThat(repository.geminiShare(hotel, FROM)).isEqualTo(new ChatReports.GeminiShare(7, 3, 1, 1));
+        assertThat(repository.geminiShare(hotel(), FROM)).isEqualTo(new ChatReports.GeminiShare(0, 0, 0, 0));
+    }
+
+    private static ChatLog.Gemini gemini(int calls) {
+        ChatLog.Gemini gemini = new ChatLog.Gemini();
+        gemini.setCalls(calls);
+        gemini.setErrors(0);
+        gemini.setInputTokens(100);
+        gemini.setOutputTokens(10);
+        return gemini;
+    }
+
     private static String hotel() {
         return "h" + UUID.randomUUID().toString().replace("-", "");
     }

@@ -15,7 +15,9 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 
 // Отчетите на хотела на влезлия админ: GET /api/admin/reports?days=30 →
-// { days, summary, funnel, noRooms, buttons } (виж ChatReports). days извън 1..180 – 400 INVALID_PERIOD.
+// { days, summary, funnel, noRooms, buttons } (виж ChatReports); GET /api/admin/reports/gemini?days=30 →
+// { days, total, bySource, byDay, share, limitPerMinute, limitPerDay } (виж AdminReportService.GeminiReport).
+// days извън 1..180 – 400 INVALID_PERIOD.
 @RestController
 @RequestMapping("/api/admin/reports")
 public class AdminReportController {
@@ -32,7 +34,21 @@ public class AdminReportController {
         try {
             return ResponseEntity.ok(adminReportService.report(admin.hotelId(), days));
         } catch (InvalidPeriodException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "INVALID_PERIOD"));
+            return invalidPeriod();
         }
+    }
+
+    @GetMapping("/gemini")
+    public ResponseEntity<?> gemini(@RequestAttribute(AdminAuthInterceptor.ADMIN) Admin admin,
+                                    @RequestParam(defaultValue = "30") int days) {
+        try {
+            return ResponseEntity.ok(adminReportService.geminiReport(admin.hotelId(), days));
+        } catch (InvalidPeriodException e) {
+            return invalidPeriod();
+        }
+    }
+
+    private static ResponseEntity<?> invalidPeriod() {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "INVALID_PERIOD"));
     }
 }

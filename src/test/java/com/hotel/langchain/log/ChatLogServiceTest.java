@@ -1,10 +1,15 @@
 package com.hotel.langchain.log;
 
 import com.hotel.langchain.model.ChatLog;
+import com.hotel.langchain.model.GeminiUsage;
 import com.hotel.langchain.repository.ChatLogRepository;
+import com.hotel.langchain.repository.GeminiUsageRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
@@ -22,6 +27,7 @@ import static org.mockito.Mockito.verify;
 class ChatLogServiceTest {
 
     private final ChatLogRepository repository = mock(ChatLogRepository.class);
+    private final GeminiUsageRepository geminiUsageRepository = mock(GeminiUsageRepository.class);
 
     @Test
     void writesOnOwnThreadWithoutBlockingAndDropsEntriesWhenQueueIsFull() throws Exception {
@@ -33,7 +39,7 @@ class ChatLogServiceTest {
             mongoReleased.await();
             return null;
         }).when(repository).insert(anyString(), any(ChatLog.class));
-        ChatLogService service = new ChatLogService(repository);
+        ChatLogService service = new ChatLogService(repository, geminiUsageRepository);
 
         long startNanos = System.nanoTime();
         for (int i = 0; i < 1_100; i++) {
@@ -52,7 +58,7 @@ class ChatLogServiceTest {
 
     @Test
     void skipsEntriesWithoutHotelId() throws Exception {
-        ChatLogService service = new ChatLogService(repository);
+        ChatLogService service = new ChatLogService(repository, geminiUsageRepository);
 
         service.log(null, ChatLogEntry.start(ChatLogEntry.CHAT, "user-1"));
         service.log(" ", ChatLogEntry.start(ChatLogEntry.CHAT, "user-1"));
@@ -63,7 +69,7 @@ class ChatLogServiceTest {
 
     @Test
     void flowStepCarriesFlowAndStep() throws Exception {
-        ChatLogService service = new ChatLogService(repository);
+        ChatLogService service = new ChatLogService(repository, geminiUsageRepository);
 
         service.logStep("seven_stars", "flow-1", ChatFlow.NEW_BOOKING, ChatFlow.STARTED_BY_BUTTON,
                 ChatFlow.ROOMS_SHOWN, ChatLogEntry.start(ChatLogEntry.SEARCH, "user-1").detail("roomsFound", 2));
@@ -83,12 +89,39 @@ class ChatLogServiceTest {
 
     @Test
     void skipsFlowStepWithoutFlowId() throws Exception {
-        ChatLogService service = new ChatLogService(repository);
+        ChatLogService service = new ChatLogService(repository, geminiUsageRepository);
 
         service.logStep("seven_stars", null, ChatFlow.NEW_BOOKING, ChatFlow.STARTED_BY_BUTTON,
                 ChatFlow.ROOMS_SHOWN, ChatLogEntry.start(ChatLogEntry.SEARCH, "user-1"));
         service.shutdown();
 
         verify(repository, never()).addFlowStep(anyString(), any(ChatLog.class), any(ChatLog.Step.class));
+    }
+
+    @Test
+    void geminiUsageGoesToTheDayOfTheGeminiQuota() throws Exception {
+        // 05:00 UTC на 30.09 е още 29.09 в Калифорния – там Gemini сменя деня на квотата
+        Clock clock = Clock.fixed(Instant.parse("2026-09-30T05:00:00Z"), ZoneOffset.UTC);
+        ChatLogService service = new ChatLogService(repository, geminiUsageRepository, clock);
+
+        service.geminiUsage("seven_stars", GeminiUsage.tokens(GeminiUsage.CHAT, "gemini-test", 2, 0, 300, 40));
+        service.shutdown();
+
+        ArgumentCaptor<GeminiUsage> usage = ArgumentCaptor.forClass(GeminiUsage.class);
+        verify(geminiUsageRepository).add(eq("seven_stars"), usage.capture());
+        assertThat(usage.getValue().getDay()).isEqualTo("2026-09-29");
+        assertThat(usage.getValue().getCalls()).isEqualTo(2);
+        assertThat(usage.getValue().getInputTokens()).isEqualTo(300);
+    }
+
+    @Test
+    void geminiUsageWithoutCallsOrHotelIsNotWritten() throws Exception {
+        ChatLogService service = new ChatLogService(repository, geminiUsageRepository);
+
+        service.geminiUsage("seven_stars", GeminiUsage.tokens(GeminiUsage.CHAT, "gemini-test", 0, 0, 0, 0));
+        service.geminiUsage(null, GeminiUsage.tokens(GeminiUsage.CHAT, "gemini-test", 1, 0, 10, 1));
+        service.shutdown();
+
+        verify(geminiUsageRepository, never()).add(anyString(), any(GeminiUsage.class));
     }
 }

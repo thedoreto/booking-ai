@@ -136,6 +136,18 @@ public class ChatLogRepository {
         }).toList();
     }
 
+    public ChatReports.GeminiShare geminiShare(String hotelId, Instant from) {
+        List<Document> pipeline = new ArrayList<>(stepsFrom(from));
+        pipeline.add(new Document("$group", new Document("_id", null)
+                .append("steps", new Document("$sum", 1))
+                .append("withGemini", countIf(new Document("$gt", List.of(number("$step.gemini.calls"), 0))))
+                .append("limitMinute", countIf(new Document("$eq", List.of("$step.errorType", ChatLogEntry.HOTEL_LIMIT_MINUTE))))
+                .append("limitDay", countIf(new Document("$eq", List.of("$step.errorType", ChatLogEntry.HOTEL_LIMIT_DAY))))));
+        Document d = aggregate(hotelId, pipeline).stream().findFirst().orElse(new Document());
+        return new ChatReports.GeminiShare(asLong(d, "steps"), asLong(d, "withGemini"), asLong(d, "limitMinute"),
+                asLong(d, "limitDay"));
+    }
+
     // Натиснатите бутони – първо най-натисканите
     public List<ChatReports.ButtonUsage> buttonUsage(String hotelId, Instant from) {
         List<Document> pipeline = new ArrayList<>(stepsFrom(from));
@@ -153,11 +165,11 @@ public class ChatLogRepository {
                 .toList();
     }
 
-    // Записите от from насам като стъпки: { userId, timestamp, step: { step, outcome, details, at } }.
+    // Записите от from насам като стъпки: { userId, timestamp, step: { step, outcome, errorType, details, gemini, at } }.
     // Отделният запис става една стъпка (type → step), действието – всичките си стъпки.
     private static List<Document> stepsFrom(Instant from) {
-        Document single = new Document("step", "$type").append("outcome", "$outcome").append("details", "$details")
-                .append("at", "$timestamp");
+        Document single = new Document("step", "$type").append("outcome", "$outcome").append("errorType", "$errorType")
+                .append("details", "$details").append("gemini", "$gemini").append("at", "$timestamp");
         return List.of(
                 new Document("$match", new Document("timestamp", new Document("$gte", Date.from(from)))),
                 new Document("$project", new Document("userId", 1).append("timestamp", 1)

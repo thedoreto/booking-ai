@@ -143,3 +143,8 @@ export function reorderShortcuts(token, shortcutIds) {
 export function reports(token, days) {
   return request(`/reports?days=${encodeURIComponent(days)}`, authorized(token))
 }
+
+// Заявките и токените към Gemini за последните days дни (без цена)
+export function geminiReport(token, days) {
+  return request(`/reports/gemini?days=${encodeURIComponent(days)}`, authorized(token))
+}

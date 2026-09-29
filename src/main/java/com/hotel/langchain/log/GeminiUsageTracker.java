@@ -15,12 +15,14 @@ import java.util.List;
 public class GeminiUsageTracker implements ChatModelListener {
 
     public static class Usage {
+        private String model;
         private int calls;
         private int errors;
         private int inputTokens;
         private int outputTokens;
         private final List<String> tools = new ArrayList<>();
 
+        public String model() { return model; }
         public int calls() { return calls; }
         public int errors() { return errors; }
         public int inputTokens() { return inputTokens; }
@@ -29,6 +31,13 @@ public class GeminiUsageTracker implements ChatModelListener {
     }
 
     private static final ThreadLocal<Usage> CURRENT = new ThreadLocal<>();
+
+    // Името на модела, към който е закачен listener-ът – за броячите в gemini_usage_<hotelId>
+    private final String modelName;
+
+    public GeminiUsageTracker(String modelName) {
+        this.modelName = modelName;
+    }
 
     public static void start() {
         CURRENT.set(new Usage());
@@ -48,6 +57,7 @@ public class GeminiUsageTracker implements ChatModelListener {
         if (usage == null || context.chatResponse() == null) {
             return;
         }
+        usage.model = modelName;
         usage.calls++;
         TokenUsage tokens = context.chatResponse().tokenUsage();
         if (tokens != null) {
@@ -66,6 +76,7 @@ public class GeminiUsageTracker implements ChatModelListener {
     public void onError(ChatModelErrorContext context) {
         Usage usage = CURRENT.get();
         if (usage != null) {
+            usage.model = modelName;
             usage.calls++;
             usage.errors++;
         }

@@ -61,7 +61,7 @@ public class AdminKnowledgeService {
     public Optional<String> suggestTranslation(String hotelId, String id, String language) {
         Language target = translationLanguage(hotelId, language);
         return knowledgeService.findById(hotelId, id)
-                .map(d -> translator.translate(d.getText(), defaultLanguageName(hotelId), List.of(target)).get(target.code()));
+                .map(d -> translator.translate(hotelId, d.getText(), defaultLanguageName(hotelId), List.of(target)).get(target.code()));
     }
 
     // Записва превода на един език (от админа – ръчно или поправено предложение); другите езици не се пипат
@@ -79,7 +79,7 @@ public class AdminKnowledgeService {
         }
         return knowledgeService.findById(hotelId, id)
                 .flatMap(d -> knowledgeService.setTranslations(hotelId, id,
-                        translator.translate(d.getText(), defaultLanguageName(hotelId), targets)))
+                        translator.translate(hotelId, d.getText(), defaultLanguageName(hotelId), targets)))
                 .map(d -> withUsage(d, usage(hotelId)));
     }
 

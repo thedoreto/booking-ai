@@ -32,7 +32,7 @@ public class GeminiBudget {
     }
 
     // Дневната квота на Gemini се нулира в полунощ тихоокеанско време
-    private static final ZoneId QUOTA_ZONE = ZoneId.of("America/Los_Angeles");
+    public static final ZoneId QUOTA_ZONE = ZoneId.of("America/Los_Angeles");
 
     private final int perMinute;
     private final int perDay;
@@ -50,6 +50,10 @@ public class GeminiBudget {
         this.perDay = perDay;
         this.clock = clock;
     }
+
+    // Лимитите – за отчета в админ панела
+    public int perMinute() { return perMinute; }
+    public int perDay() { return perDay; }
 
     // Записва съобщението, ако е в лимита
     public Result tryAcquire(String hotelId) {

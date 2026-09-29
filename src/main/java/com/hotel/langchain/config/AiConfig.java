@@ -14,6 +14,9 @@ import java.util.List;
 @Configuration
 public class AiConfig {
 
+    // Моделът за embeddings – на знанията и на въпросите в чата (RAG)
+    public static final String EMBEDDING_MODEL = "gemini-embedding-001";
+
     @Value("${gemini.api.key}")
     private String apiKey;
 
@@ -26,7 +29,7 @@ public class AiConfig {
                 .apiKey(apiKey)
                 .modelName(baseModel)
                 .maxRetries(1) // повторните опити са в RetryingChatLanguageModel
-                .listeners(List.of(new GeminiUsageTracker())) // токени и tools за логовете
+                .listeners(List.of(new GeminiUsageTracker(baseModel))) // токени и tools за логовете
                 .build();
         // При 503 от Gemini: нов опит след 2s, 5s и 10s
         ChatLanguageModel retrying = new RetryingChatLanguageModel(gemini, 2_000, 5_000, 10_000);
@@ -38,7 +41,7 @@ public class AiConfig {
     EmbeddingModel embeddingModel() {
         return GoogleAiEmbeddingModel.builder()
                 .apiKey(apiKey)
-                .modelName("gemini-embedding-001")
+                .modelName(EMBEDDING_MODEL)
                 .build();
     }
 }

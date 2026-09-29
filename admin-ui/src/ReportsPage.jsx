@@ -1,24 +1,30 @@
 import { useEffect, useState } from 'react'
 import {
-  Alert, Box, Card, CardContent, CircularProgress, LinearProgress, Link, Table, TableBody, TableCell, TableHead,
-  TableRow, ToggleButton, ToggleButtonGroup, Typography,
+  Alert, Box, CircularProgress, LinearProgress, Link, Tab, Table, TableBody, TableCell, TableHead,
+  TableRow, Tabs, ToggleButton, ToggleButtonGroup, Typography,
 } from '@mui/material'
-import { getToken, reports } from './api.js'
+import { geminiReport, getToken, reports } from './api.js'
+import GeminiReport from './GeminiReport.jsx'
+import { count, date } from './reportFormat.js'
+import { Cards, Section } from './reportParts.jsx'
 
 const PERIODS = [7, 30, 90, 180]
+const LOADERS = { chat: reports, gemini: geminiReport }
 
-// Отчетите на хотела от логовете на чата за последните 7/30/90/180 дни: обобщение, пътят до резервация,
-// търсения без свободни стаи и натиснатите бутони. Сумите са без валута – валутата още не идва от хотела.
+// Отчетите на хотела за последните 7/30/90/180 дни, в два под-таба с общ период:
+// „Чат“ – от логовете на чата: обобщение, пътят до резервация, търсения без свободни стаи и натиснатите бутони
+// (сумите са без валута – валутата още не идва от хотела); „Gemini“ – заявките и токените (GeminiReport.jsx).
 export default function ReportsPage({ onOpenShortcut, onUnauthorized }) {
+  const [view, setView] = useState('chat')
   const [days, setDays] = useState(30)
-  // Отчетът за days; друг days – още се зарежда
-  const [report, setReport] = useState(null)
+  // Последният зареден отчет: { view, days, data }; друг view или days – още се зарежда
+  const [loaded, setLoaded] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     let current = true
-    reports(getToken(), days)
-      .then((result) => current && setReport(result))
+    LOADERS[view](getToken(), days)
+      .then((data) => current && setLoaded({ view, days, data }))
       .catch((e) => {
         if (!current) {
           return
@@ -32,7 +38,7 @@ export default function ReportsPage({ onOpenShortcut, onUnauthorized }) {
     return () => {
       current = false
     }
-  }, [days, onUnauthorized])
+  }, [view, days, onUnauthorized])
 
   function changePeriod(value) {
     if (value) {
@@ -41,9 +47,20 @@ export default function ReportsPage({ onOpenShortcut, onUnauthorized }) {
     }
   }
 
-  const loading = !error && report?.days !== days
+  function changeView(value) {
+    setError(null)
+    setView(value)
+  }
+
+  // При смяна на периода старият отчет остава блед, докато се зареди новият; при смяна на под-таба – няма какво да се покаже
+  const report = loaded?.view === view ? loaded.data : null
+  const loading = !error && (report === null || loaded.days !== days)
   return (
     <Box>
+      <Tabs value={view} onChange={(e, value) => changeView(value)} sx={{ mb: 2 }}>
+        <Tab value="chat" label="Чат" />
+        <Tab value="gemini" label="Gemini" />
+      </Tabs>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3, flexWrap: 'wrap' }}>
         <Typography variant="body2" color="text.secondary">Период:</Typography>
         <ToggleButtonGroup exclusive size="small" value={days} onChange={(e, value) => changePeriod(value)}
@@ -63,10 +80,16 @@ export default function ReportsPage({ onOpenShortcut, onUnauthorized }) {
       )}
       {!error && report && (
         <Box sx={{ opacity: loading ? 0.5 : 1 }}>
-          <Summary summary={report.summary} />
-          <Funnel funnel={report.funnel} />
-          <NoRooms searches={report.noRooms} />
-          <Buttons buttons={report.buttons} onOpenShortcut={onOpenShortcut} />
+          {view === 'chat' ? (
+            <>
+              <Summary summary={report.summary} />
+              <Funnel funnel={report.funnel} />
+              <NoRooms searches={report.noRooms} />
+              <Buttons buttons={report.buttons} onOpenShortcut={onOpenShortcut} />
+            </>
+          ) : (
+            <GeminiReport report={report} />
+          )}
         </Box>
       )}
     </Box>
@@ -86,19 +109,7 @@ function Summary({ summary }) {
     { label: 'Откази през чата', value: count(summary.cancellations), note: `сума ${money(summary.canceledTotal)}` },
     { label: 'Влезли потребители', value: count(summary.users), note: `${guestShare}% от действията са от гости` },
   ]
-  return (
-    <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 2, mb: 3 }}>
-      {cards.map((card) => (
-        <Card key={card.label}>
-          <CardContent>
-            <Typography variant="body2" color="text.secondary">{card.label}</Typography>
-            <Typography variant="h4" component="div">{card.value}</Typography>
-            {card.note && <Typography variant="caption" color="text.secondary">{card.note}</Typography>}
-          </CardContent>
-        </Card>
-      ))}
-    </Box>
-  )
+  return <Cards cards={cards} />
 }
 
 function Funnel({ funnel }) {
@@ -204,28 +215,6 @@ function Buttons({ buttons, onOpenShortcut }) {
   )
 }
 
-function Section({ title, hint, children }) {
-  return (
-    <Card sx={{ mb: 3 }}>
-      <CardContent>
-        <Typography variant="h6">{title}</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{hint}</Typography>
-        {children}
-      </CardContent>
-    </Card>
-  )
-}
-
-function count(value) {
-  return value.toLocaleString('bg-BG')
-}
-
 function money(value) {
   return value.toLocaleString('bg-BG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
-// 2026-07-01 → 01.07.2026; друго – както е
-function date(value) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '')
-  return match ? `${match[3]}.${match[2]}.${match[1]}` : value || '—'
 }

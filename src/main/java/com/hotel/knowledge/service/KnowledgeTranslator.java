@@ -3,10 +3,16 @@ package com.hotel.knowledge.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hotel.langchain.config.RetryingChatLanguageModel;
+import com.hotel.langchain.log.ChatLogService;
+import com.hotel.langchain.model.GeminiUsage;
 import com.hotel.langchain.service.HotelLanguages.Language;
+import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ResponseFormat;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
+import dev.langchain4j.model.output.TokenUsage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -18,7 +24,8 @@ import java.util.stream.Collectors;
 
 // Превод на знание с Gemini – само от админ панела, никога в чата. Едно извикване за всички поискани езици,
 // отговорът е JSON { "<код>": "<превод>" }. Моделът е отделен от този на чата (без tools, памет, логове и лимита
-// на чата); повторни опити при 503 – както в чата.
+// на чата); повторни опити при 503 – както в чата. Всеки превод се брои в gemini_usage_<hotelId> (admin_translation);
+// повторните опити при 503 са едно извикване.
 @Service
 public class KnowledgeTranslator {
 
@@ -38,33 +45,47 @@ public class KnowledgeTranslator {
             %s""";
 
     private final ChatLanguageModel model;
+    private final String modelName;
+    private final ChatLogService chatLogService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
-    public KnowledgeTranslator(@Value("${gemini.api.key}") String apiKey, @Value("${gemini.base.model}") String baseModel) {
+    public KnowledgeTranslator(@Value("${gemini.api.key}") String apiKey, @Value("${gemini.base.model}") String baseModel,
+                               ChatLogService chatLogService) {
         this(new RetryingChatLanguageModel(GoogleAiGeminiChatModel.builder()
                 .apiKey(apiKey)
                 .modelName(baseModel)
                 .responseFormat(ResponseFormat.JSON)
                 .temperature(0.2)
                 .maxRetries(1)
-                .build(), 2_000, 5_000));
+                .build(), 2_000, 5_000), baseModel, chatLogService);
     }
 
-    KnowledgeTranslator(ChatLanguageModel model) {
+    KnowledgeTranslator(ChatLanguageModel model, String modelName, ChatLogService chatLogService) {
         this.model = model;
+        this.modelName = modelName;
+        this.chatLogService = chatLogService;
     }
 
     // Код на език → преводът; всички поискани езици, иначе TranslationFailedException
-    public Map<String, String> translate(String text, String fromLanguageName, List<Language> targets) {
+    public Map<String, String> translate(String hotelId, String text, String fromLanguageName, List<Language> targets) {
         String names = targets.stream().map(l -> l.name() + " (" + l.code() + ")").collect(Collectors.joining(", "));
         String keys = targets.stream().map(l -> "\"" + l.code() + "\"").collect(Collectors.joining(", "));
-        String answer;
+        ChatRequest request = ChatRequest.builder()
+                .messages(UserMessage.from(PROMPT.formatted(fromLanguageName, names, keys, text)))
+                .build();
+        ChatResponse response;
         try {
-            answer = model.chat(PROMPT.formatted(fromLanguageName, names, keys, text));
+            response = model.chat(request);
         } catch (RuntimeException e) {
+            chatLogService.geminiUsage(hotelId, GeminiUsage.tokens(GeminiUsage.ADMIN_TRANSLATION, modelName, 1, 1, 0, 0));
             throw new TranslationFailedException("Gemini error", e);
         }
+        TokenUsage tokens = response.tokenUsage();
+        chatLogService.geminiUsage(hotelId, GeminiUsage.tokens(GeminiUsage.ADMIN_TRANSLATION, modelName, 1, 0,
+                tokens != null && tokens.inputTokenCount() != null ? tokens.inputTokenCount() : 0,
+                tokens != null && tokens.outputTokenCount() != null ? tokens.outputTokenCount() : 0));
+        String answer = response.aiMessage() != null ? response.aiMessage().text() : null;
         Map<String, String> parsed;
         try {
             parsed = objectMapper.readValue(stripFences(answer), new TypeReference<Map<String, String>>() {});

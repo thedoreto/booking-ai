@@ -15,7 +15,7 @@ import static org.mockito.Mockito.when;
 
 class GeminiUsageTrackerTest {
 
-    private final GeminiUsageTracker tracker = new GeminiUsageTracker();
+    private final GeminiUsageTracker tracker = new GeminiUsageTracker("gemini-test");
 
     @AfterEach
     void clear() {
@@ -32,6 +32,7 @@ class GeminiUsageTrackerTest {
         tracker.onError(mock(ChatModelErrorContext.class));
 
         GeminiUsageTracker.Usage usage = GeminiUsageTracker.current();
+        assertThat(usage.model()).isEqualTo("gemini-test");
         assertThat(usage.calls()).isEqualTo(3);
         assertThat(usage.errors()).isEqualTo(1);
         assertThat(usage.inputTokens()).isEqualTo(250);
